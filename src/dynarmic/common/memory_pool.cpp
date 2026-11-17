@@ -6,8 +6,35 @@
 #include "dynarmic/common/memory_pool.h"
 
 #include <cstdlib>
+#include <utility>
 
 namespace Dynarmic::Common {
+
+namespace {
+
+// The last slab freed on this thread. A JIT builds and frees one IR block at a time, so the next
+// block's pool takes this slab instead of allocating a new one.
+struct SlabCache {
+    char* slab = nullptr;
+    size_t size = 0;
+
+    ~SlabCache() {
+        std::free(slab);
+    }
+};
+
+thread_local SlabCache slab_cache;
+
+void FreeSlab(char* slab, size_t size) {
+    if (slab_cache.slab == nullptr) {
+        slab_cache.slab = slab;
+        slab_cache.size = size;
+    } else {
+        std::free(slab);
+    }
+}
+
+}  // namespace
 
 Pool::Pool(size_t object_size, size_t initial_pool_size)
         : object_size(object_size), slab_size(initial_pool_size) {
@@ -15,10 +42,10 @@ Pool::Pool(size_t object_size, size_t initial_pool_size)
 }
 
 Pool::~Pool() {
-    std::free(current_slab);
+    FreeSlab(current_slab, object_size * slab_size);
 
     for (char* slab : slabs) {
-        std::free(slab);
+        FreeSlab(slab, object_size * slab_size);
     }
 }
 
@@ -36,7 +63,11 @@ void* Pool::Alloc() {
 }
 
 void Pool::AllocateNewSlab() {
-    current_slab = static_cast<char*>(std::malloc(object_size * slab_size));
+    if (slab_cache.slab != nullptr && slab_cache.size == object_size * slab_size) {
+        current_slab = std::exchange(slab_cache.slab, nullptr);
+    } else {
+        current_slab = static_cast<char*>(std::malloc(object_size * slab_size));
+    }
     current_ptr = current_slab;
     remaining = slab_size;
 }
