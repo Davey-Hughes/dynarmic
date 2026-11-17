@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include <boost/container/small_vector.hpp>
 #include <mcl/assert.hpp>
 #include <mcl/stdint.hpp>
 #include <mcl/type_traits/is_instance_of_template.hpp>
@@ -137,7 +138,7 @@ private:
 };
 
 struct HostLocInfo final {
-    std::vector<const IR::Inst*> values;
+    boost::container::small_vector<const IR::Inst*, 2> values;
     size_t locked = 0;
     bool realized = false;
     size_t uses_this_inst = 0;
@@ -320,6 +321,10 @@ private:
     void LoadCopyInto(const IR::Value& value, oaknut::QReg reg);
 
     std::optional<HostLoc> ValueLocation(const IR::Inst* value) const;
+    std::optional<HostLoc> FindValueLocation(const IR::Inst* value) const;
+    void SetLocationHint(const IR::Inst* value, HostLoc host_loc) const;
+    void SetLocationHints(HostLoc host_loc) const;
+    const HostLocInfo& ValueInfo(HostLoc host_loc) const;
     HostLocInfo& ValueInfo(HostLoc host_loc);
     HostLocInfo& ValueInfo(const IR::Inst* value);
 
@@ -332,6 +337,12 @@ private:
     std::array<HostLocInfo, 32> fprs;
     HostLocInfo flags;
     std::array<HostLocInfo, SpillCount> spills;
+    // Spill slots at or above this index have held nothing in this block.
+    size_t spills_used{};
+
+    // Last known location of each value, indexed by IR::Inst::GetName(). Only a hint:
+    // ValueLocation() checks that the location still holds the value before using it.
+    mutable std::vector<std::optional<HostLoc>> location_hints;
 
     mutable size_t alloc_candidate_index{};
 
