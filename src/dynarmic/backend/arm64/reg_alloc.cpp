@@ -191,7 +191,9 @@ void RegAlloc::PrepareForCall(std::optional<Argument::copyable_reference> arg0, 
 void RegAlloc::DefineAsExisting(IR::Inst* inst, Argument& arg) {
     defined_insts.insert(inst);
 
+#ifndef MCL_IGNORE_ASSERTS
     ASSERT(!ValueLocation(inst));
+#endif
 
     if (arg.value.IsImmediate()) {
         inst->ReplaceUsesWith(arg.value);
@@ -209,7 +211,9 @@ void RegAlloc::DefineAsExisting(IR::Inst* inst, Argument& arg) {
 void RegAlloc::DefineAsRegister(IR::Inst* inst, oaknut::Reg reg) {
     defined_insts.insert(inst);
 
+#ifndef MCL_IGNORE_ASSERTS
     ASSERT(!ValueLocation(inst));
+#endif
     auto& info = reg.is_vector() ? fprs[reg.index()] : gprs[reg.index()];
     ASSERT(info.IsCompletelyEmpty());
     info.values.push_back(inst);
@@ -381,7 +385,9 @@ template<HostLoc::Kind kind>
 int RegAlloc::RealizeWriteImpl(const IR::Inst* value) {
     defined_insts.insert(value);
 
+#ifndef MCL_IGNORE_ASSERTS
     ASSERT(!ValueLocation(value));
+#endif
 
     if constexpr (kind == HostLoc::Kind::Gpr) {
         const int new_location_index = AllocateRegister(gprs, gpr_order);
