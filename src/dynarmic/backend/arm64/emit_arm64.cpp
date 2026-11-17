@@ -243,7 +243,9 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
         }
 
         reg_alloc.UpdateAllUses();
+#ifndef MCL_IGNORE_ASSERTS
         reg_alloc.AssertAllUnlocked();
+#endif
 
         if (conf.very_verbose_debugging_output) {
             EmitVerboseDebuggingOutput(code, ctx);

@@ -226,7 +226,9 @@ private:
             Optimization::DeadCodeElimination(ir_block);
         }
         Optimization::IdentityRemovalPass(ir_block);
+#ifndef MCL_IGNORE_ASSERTS
         Optimization::VerificationPass(ir_block);
+#endif
         return emitter.Emit(ir_block);
     }
 
