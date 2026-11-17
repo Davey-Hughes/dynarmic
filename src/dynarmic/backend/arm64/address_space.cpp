@@ -66,8 +66,7 @@ CodePtr AddressSpace::GetOrEmit(IR::LocationDescriptor descriptor) {
     }
 
     IR::Block ir_block = GenerateIR(descriptor);
-    const EmittedBlockInfo block_info = Emit(std::move(ir_block));
-    return block_info.entry_point;
+    return Emit(std::move(ir_block));
 }
 
 void AddressSpace::InvalidateBasicBlocks(const tsl::robin_set<IR::LocationDescriptor>& descriptors) {
@@ -107,31 +106,35 @@ size_t AddressSpace::GetRemainingSize() {
     return code_cache_size - static_cast<size_t>(code.offset());
 }
 
-EmittedBlockInfo AddressSpace::Emit(IR::Block block) {
+CodePtr AddressSpace::Emit(IR::Block block) {
     if (GetRemainingSize() < 1024 * 1024) {
         ClearCache();
     }
 
     UnprotectCodeMemory();
 
-    EmittedBlockInfo block_info = EmitArm64(code, std::move(block), GetEmitConfig(), fastmem_manager);
+    EmittedBlockInfo new_block_info = EmitArm64(code, std::move(block), GetEmitConfig(), fastmem_manager);
+    const CodePtr entry_point = new_block_info.entry_point;
 
-    ASSERT(block_entries.insert({block.Location(), block_info.entry_point}).second);
-    ASSERT(reverse_block_entries.insert({block_info.entry_point, block.Location()}).second);
-    ASSERT(block_infos.insert({block_info.entry_point, block_info}).second);
+    ASSERT(block_entries.insert({block.Location(), entry_point}).second);
+    ASSERT(reverse_block_entries.insert({entry_point, block.Location()}).second);
+    const auto [block_info_iter, inserted] = block_infos.insert({entry_point, std::move(new_block_info)});
+    ASSERT(inserted);
+    // Nothing below inserts into block_infos, so this reference stays valid.
+    const EmittedBlockInfo& block_info = block_info_iter->second;
 
     Link(block_info);
-    RelinkForDescriptor(block.Location(), block_info.entry_point);
+    RelinkForDescriptor(block.Location(), entry_point);
 
-    mem.invalidate(reinterpret_cast<u32*>(block_info.entry_point), block_info.size);
+    mem.invalidate(reinterpret_cast<u32*>(entry_point), block_info.size);
     ProtectCodeMemory();
 
     RegisterNewBasicBlock(block, block_info);
 
-    return block_info;
+    return entry_point;
 }
 
-void AddressSpace::Link(EmittedBlockInfo& block_info) {
+void AddressSpace::Link(const EmittedBlockInfo& block_info) {
     using namespace oaknut;
     using namespace oaknut::util;
 
@@ -265,7 +268,7 @@ void AddressSpace::Link(EmittedBlockInfo& block_info) {
         }
     }
 
-    for (auto [target_descriptor, list] : block_info.block_relocations) {
+    for (const auto& [target_descriptor, list] : block_info.block_relocations) {
         block_references[target_descriptor].insert(block_info.entry_point);
         LinkBlockLinks(block_info.entry_point, Get(target_descriptor), list);
     }
@@ -301,7 +304,12 @@ void AddressSpace::LinkBlockLinks(const CodePtr entry_point, const CodePtr targe
 }
 
 void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor, CodePtr target_ptr) {
-    for (auto code_ptr : block_references[target_descriptor]) {
+    const auto references = block_references.find(target_descriptor);
+    if (references == block_references.end()) {
+        return;
+    }
+
+    for (auto code_ptr : references->second) {
         if (auto block_iter = block_infos.find(code_ptr); block_iter != block_infos.end()) {
             const EmittedBlockInfo& block_info = block_iter->second;
 
