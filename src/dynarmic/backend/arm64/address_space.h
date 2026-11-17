@@ -15,6 +15,7 @@
 #include <tsl/robin_set.h>
 
 #include "dynarmic/backend/arm64/emit_arm64.h"
+#include "dynarmic/backend/arm64/emit_context.h"
 #include "dynarmic/backend/arm64/fastmem.h"
 #include "dynarmic/interface/halt_reason.h"
 #include "dynarmic/ir/basic_block.h"
@@ -82,6 +83,7 @@ protected:
 
     ExceptionHandler exception_handler;
     FastmemManager fastmem_manager;
+    EmitBuffers emit_buffers;
 
     struct PreludeInfo {
         std::ptrdiff_t end_of_prelude;

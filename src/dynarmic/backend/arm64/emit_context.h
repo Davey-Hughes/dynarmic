@@ -32,6 +32,13 @@ inline SharedLabel GenSharedLabel() {
     return std::make_shared<oaknut::Label>();
 }
 
+// Containers EmitArm64 fills for each block. The caller keeps them between blocks so that their
+// storage is reused instead of allocated again for every block.
+struct EmitBuffers {
+    RegAllocBuffers reg_alloc;
+    std::vector<std::function<void()>> deferred_emits;
+};
+
 struct EmitContext {
     IR::Block& block;
     RegAlloc& reg_alloc;
@@ -40,7 +47,7 @@ struct EmitContext {
     FpsrManager& fpsr;
     FastmemManager& fastmem;
 
-    std::vector<std::function<void()>> deferred_emits;
+    std::vector<std::function<void()>>& deferred_emits;
 
     FP::FPCR FPCR(bool fpcr_controlled = true) const {
         const FP::FPCR fpcr = conf.descriptor_to_fpcr(block.Location());

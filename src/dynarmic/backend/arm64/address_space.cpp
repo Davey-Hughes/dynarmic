@@ -113,7 +113,7 @@ CodePtr AddressSpace::Emit(IR::Block block) {
 
     UnprotectCodeMemory();
 
-    EmittedBlockInfo new_block_info = EmitArm64(code, std::move(block), GetEmitConfig(), fastmem_manager);
+    EmittedBlockInfo new_block_info = EmitArm64(code, std::move(block), GetEmitConfig(), fastmem_manager, emit_buffers);
     const CodePtr entry_point = new_block_info.entry_point;
 
     ASSERT(block_entries.insert({block.Location(), entry_point}).second);

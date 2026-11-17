@@ -141,7 +141,23 @@ RegAlloc::ArgumentInfo RegAlloc::GetArgumentInfo(IR::Inst* inst) {
 }
 
 bool RegAlloc::WasValueDefined(IR::Inst* inst) const {
-    return defined_insts.count(inst) > 0;
+    const unsigned name = inst->GetName();
+    if (name == 0) {
+        return defined_unnamed.count(inst) > 0;
+    }
+    return name < defined_marks.size() && defined_marks[name] == block_mark;
+}
+
+void RegAlloc::MarkDefined(const IR::Inst* value) {
+    const unsigned name = value->GetName();
+    if (name == 0) {
+        defined_unnamed.insert(value);
+        return;
+    }
+    if (name >= defined_marks.size()) {
+        defined_marks.resize(std::max<size_t>(name + 1, 256));
+    }
+    defined_marks[name] = block_mark;
 }
 
 void RegAlloc::PrepareForCall(std::optional<Argument::copyable_reference> arg0, std::optional<Argument::copyable_reference> arg1, std::optional<Argument::copyable_reference> arg2, std::optional<Argument::copyable_reference> arg3) {
@@ -189,7 +205,7 @@ void RegAlloc::PrepareForCall(std::optional<Argument::copyable_reference> arg0, 
 }
 
 void RegAlloc::DefineAsExisting(IR::Inst* inst, Argument& arg) {
-    defined_insts.insert(inst);
+    MarkDefined(inst);
 
 #ifndef MCL_IGNORE_ASSERTS
     ASSERT(!ValueLocation(inst));
@@ -209,7 +225,7 @@ void RegAlloc::DefineAsExisting(IR::Inst* inst, Argument& arg) {
 }
 
 void RegAlloc::DefineAsRegister(IR::Inst* inst, oaknut::Reg reg) {
-    defined_insts.insert(inst);
+    MarkDefined(inst);
 
 #ifndef MCL_IGNORE_ASSERTS
     ASSERT(!ValueLocation(inst));
@@ -383,7 +399,7 @@ int RegAlloc::RealizeReadImpl(const IR::Value& value) {
 
 template<HostLoc::Kind kind>
 int RegAlloc::RealizeWriteImpl(const IR::Inst* value) {
-    defined_insts.insert(value);
+    MarkDefined(value);
 
 #ifndef MCL_IGNORE_ASSERTS
     ASSERT(!ValueLocation(value));
@@ -413,7 +429,7 @@ int RegAlloc::RealizeWriteImpl(const IR::Inst* value) {
 
 template<HostLoc::Kind kind>
 int RegAlloc::RealizeReadWriteImpl(const IR::Value& read_value, const IR::Inst* write_value) {
-    defined_insts.insert(write_value);
+    MarkDefined(write_value);
 
     // TODO: Move elimination
 
@@ -442,7 +458,7 @@ template int RegAlloc::RealizeReadWriteImpl<HostLoc::Kind::Gpr>(const IR::Value&
 template int RegAlloc::RealizeReadWriteImpl<HostLoc::Kind::Fpr>(const IR::Value&, const IR::Inst*);
 template int RegAlloc::RealizeReadWriteImpl<HostLoc::Kind::Flags>(const IR::Value&, const IR::Inst*);
 
-int RegAlloc::AllocateRegister(const std::array<HostLocInfo, 32>& regs, const std::vector<int>& order) const {
+int RegAlloc::AllocateRegister(const std::array<HostLocInfo, 32>& regs, std::span<const int> order) const {
     const auto empty = std::find_if(order.begin(), order.end(), [&](int i) { return regs[i].IsCompletelyEmpty(); });
     if (empty != order.end()) {
         return *empty;
@@ -487,7 +503,9 @@ void RegAlloc::SpillFpr(int index) {
 }
 
 void RegAlloc::ReadWriteFlags(Argument& read, IR::Inst* write) {
-    defined_insts.insert(write);
+    if (write) {
+        MarkDefined(write);
+    }
 
     const auto current_location = ValueLocation(read.value.GetInst());
     ASSERT(current_location);

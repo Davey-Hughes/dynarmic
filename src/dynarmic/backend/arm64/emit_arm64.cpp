@@ -191,7 +191,7 @@ static void EmitAddCycles(oaknut::CodeGenerator& code, EmitContext& ctx, size_t 
     }
 }
 
-EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const EmitConfig& conf, FastmemManager& fastmem_manager) {
+EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const EmitConfig& conf, FastmemManager& fastmem_manager, EmitBuffers& buffers) {
     if (conf.very_verbose_debugging_output) {
         std::puts(IR::DumpBlock(block).c_str());
     }
@@ -199,8 +199,8 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     EmittedBlockInfo ebi;
 
     FpsrManager fpsr_manager{code, conf.state_fpsr_offset};
-    RegAlloc reg_alloc{code, fpsr_manager, GPR_ORDER, FPR_ORDER};
-    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, {}};
+    RegAlloc reg_alloc{code, fpsr_manager, {GPR_ORDER.begin(), GPR_ORDER.end()}, {FPR_ORDER.begin(), FPR_ORDER.end()}, buffers.reg_alloc};
+    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits};
 
     ebi.entry_point = code.xptr<CodePtr>();
 
@@ -263,6 +263,7 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     for (const auto& deferred_emit : ctx.deferred_emits) {
         deferred_emit();
     }
+    ctx.deferred_emits.clear();
     code.BRK(0);
 
     ebi.size = code.xptr<CodePtr>() - ebi.entry_point;

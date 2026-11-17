@@ -8,6 +8,7 @@
 #include <array>
 #include <optional>
 #include <random>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -154,12 +155,22 @@ struct HostLocInfo final {
     void UpdateUses();
 };
 
+// Per-value tables RegAlloc fills for each block, indexed by IR::Inst::GetName(). The owner keeps
+// them between blocks so that their storage is reused instead of allocated again for every block.
+// Neither is cleared between blocks: location hints are checked before use, and a defined mark only
+// counts if it holds the current block's number.
+struct RegAllocBuffers {
+    std::vector<std::optional<HostLoc>> location_hints;
+    std::vector<u64> defined_marks;
+    u64 block_count = 0;
+};
+
 class RegAlloc final {
 public:
     using ArgumentInfo = std::array<Argument, IR::max_arg_count>;
 
-    explicit RegAlloc(oaknut::CodeGenerator& code, FpsrManager& fpsr_manager, std::vector<int> gpr_order, std::vector<int> fpr_order)
-            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order} {}
+    explicit RegAlloc(oaknut::CodeGenerator& code, FpsrManager& fpsr_manager, std::span<const int> gpr_order, std::span<const int> fpr_order, RegAllocBuffers& buffers)
+            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order}, location_hints{buffers.location_hints}, defined_marks{buffers.defined_marks}, block_mark{++buffers.block_count} {}
 
     ArgumentInfo GetArgumentInfo(IR::Inst* inst);
     bool WasValueDefined(IR::Inst* inst) const;
@@ -312,7 +323,7 @@ private:
     template<HostLoc::Kind kind>
     int RealizeReadWriteImpl(const IR::Value& read_value, const IR::Inst* write_value);
 
-    int AllocateRegister(const std::array<HostLocInfo, 32>& regs, const std::vector<int>& order) const;
+    int AllocateRegister(const std::array<HostLocInfo, 32>& regs, std::span<const int> order) const;
     void SpillGpr(int index);
     void SpillFpr(int index);
     int FindFreeSpill() const;
@@ -322,6 +333,7 @@ private:
 
     std::optional<HostLoc> ValueLocation(const IR::Inst* value) const;
     std::optional<HostLoc> FindValueLocation(const IR::Inst* value) const;
+    void MarkDefined(const IR::Inst* value);
     void SetLocationHint(const IR::Inst* value, HostLoc host_loc) const;
     void SetLocationHints(HostLoc host_loc) const;
     const HostLocInfo& ValueInfo(HostLoc host_loc) const;
@@ -330,8 +342,8 @@ private:
 
     oaknut::CodeGenerator& code;
     FpsrManager& fpsr_manager;
-    std::vector<int> gpr_order;
-    std::vector<int> fpr_order;
+    std::span<const int> gpr_order;
+    std::span<const int> fpr_order;
 
     std::array<HostLocInfo, 32> gprs;
     std::array<HostLocInfo, 32> fprs;
@@ -342,11 +354,14 @@ private:
 
     // Last known location of each value, indexed by IR::Inst::GetName(). Only a hint:
     // ValueLocation() checks that the location still holds the value before using it.
-    mutable std::vector<std::optional<HostLoc>> location_hints;
+    std::vector<std::optional<HostLoc>>& location_hints;
 
     mutable size_t alloc_candidate_index{};
 
-    tsl::robin_set<const IR::Inst*> defined_insts;
+    // Values defined in this block: by name in defined_marks, unnamed values (name 0) here.
+    std::vector<u64>& defined_marks;
+    const u64 block_mark;
+    tsl::robin_set<const IR::Inst*> defined_unnamed;
 };
 
 template<typename T>
