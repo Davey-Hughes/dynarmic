@@ -414,7 +414,8 @@ void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx
         }
     }();
     const bool ordered = IsOrdered(args[2].GetImmediateAccType());
-    ctx.fpsr.Spill();
+    // FPSR stays live on the inline path. Only the fallback calls into C++, so it saves FPSR around the call.
+    const bool fpsr_loaded = ctx.fpsr.IsLoaded();
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
@@ -423,10 +424,16 @@ void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx
     const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     EmitMemoryLdr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered);
 
-    ctx.deferred_emits.emplace_back([&code, &ctx, inst, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fallback, end] {
+    ctx.deferred_emits.emplace_back([&code, &ctx, inst, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fpsr_loaded, fallback, end] {
         code.l(*fallback);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitSpillKeepState();
+        }
         code.MOV(Xscratch0, Xaddr);
         EmitRelocation(code, ctx, WrappedReadMemoryLinkTarget(bitsize));
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitReZero();
+        }
         if (ordered) {
             code.DMB(oaknut::BarrierOp::ISH);
         }
@@ -454,7 +461,7 @@ void InlinePageTableEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ct
         }
     }();
     const bool ordered = IsOrdered(args[3].GetImmediateAccType());
-    ctx.fpsr.Spill();
+    const bool fpsr_loaded = ctx.fpsr.IsLoaded();
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
@@ -463,8 +470,11 @@ void InlinePageTableEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ct
     const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     EmitMemoryStr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered);
 
-    ctx.deferred_emits.emplace_back([&code, &ctx, inst, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fallback, end] {
+    ctx.deferred_emits.emplace_back([&code, &ctx, inst, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fpsr_loaded, fallback, end] {
         code.l(*fallback);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitSpillKeepState();
+        }
         if constexpr (bitsize == 128) {
             code.MOV(Xscratch0, Xaddr);
             code.MOV(Q0.B16(), Rvalue.B16());
@@ -476,6 +486,9 @@ void InlinePageTableEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ct
             code.DMB(oaknut::BarrierOp::ISH);
         }
         EmitRelocation(code, ctx, WrappedWriteMemoryLinkTarget(bitsize));
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitReZero();
+        }
         if (ordered) {
             code.DMB(oaknut::BarrierOp::ISH);
         }
@@ -533,7 +546,8 @@ void FastmemEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
         }
     }();
     const bool ordered = IsOrdered(args[2].GetImmediateAccType());
-    ctx.fpsr.Spill();
+    // As the inline page-table path: a fault lands on the fallback, which saves FPSR around the call.
+    const bool fpsr_loaded = ctx.fpsr.IsLoaded();
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
@@ -542,7 +556,7 @@ void FastmemEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
     const auto [Xbase, Xoffset] = FastmemEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     const auto fastmem_location = EmitMemoryLdr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered, ShouldExt32(ctx));
 
-    ctx.deferred_emits.emplace_back([&code, &ctx, inst, marker, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fallback, end, fastmem_location] {
+    ctx.deferred_emits.emplace_back([&code, &ctx, inst, marker, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fpsr_loaded, fallback, end, fastmem_location] {
         ctx.ebi.fastmem_patch_info.emplace(
             fastmem_location - ctx.ebi.entry_point,
             FastmemPatchInfo{
@@ -554,8 +568,14 @@ void FastmemEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
             });
 
         code.l(*fallback);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitSpillKeepState();
+        }
         code.MOV(Xscratch0, Xaddr);
         EmitRelocation(code, ctx, WrappedReadMemoryLinkTarget(bitsize));
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitReZero();
+        }
         if (ordered) {
             code.DMB(oaknut::BarrierOp::ISH);
         }
@@ -583,7 +603,7 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
         }
     }();
     const bool ordered = IsOrdered(args[3].GetImmediateAccType());
-    ctx.fpsr.Spill();
+    const bool fpsr_loaded = ctx.fpsr.IsLoaded();
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
@@ -592,7 +612,7 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
     const auto [Xbase, Xoffset] = FastmemEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     const auto fastmem_location = EmitMemoryStr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered, ShouldExt32(ctx));
 
-    ctx.deferred_emits.emplace_back([&code, &ctx, inst, marker, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fallback, end, fastmem_location] {
+    ctx.deferred_emits.emplace_back([&code, &ctx, inst, marker, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fpsr_loaded, fallback, end, fastmem_location] {
         ctx.ebi.fastmem_patch_info.emplace(
             fastmem_location - ctx.ebi.entry_point,
             FastmemPatchInfo{
@@ -604,6 +624,9 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
             });
 
         code.l(*fallback);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitSpillKeepState();
+        }
         if constexpr (bitsize == 128) {
             code.MOV(Xscratch0, Xaddr);
             code.MOV(Q0.B16(), Rvalue.B16());
@@ -615,6 +638,9 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
             code.DMB(oaknut::BarrierOp::ISH);
         }
         EmitRelocation(code, ctx, WrappedWriteMemoryLinkTarget(bitsize));
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitReZero();
+        }
         if (ordered) {
             code.DMB(oaknut::BarrierOp::ISH);
         }
