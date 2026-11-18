@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#pragma once
+
 #include <mcl/stdint.hpp>
 
 namespace oaknut {
@@ -28,5 +30,8 @@ template<size_t bitsize>
 void EmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst);
 template<size_t bitsize>
 void EmitExclusiveWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst);
+
+// Fills ctx.vfp_memory for the block, before any of it is emitted.
+void AssignVfpMemoryRoles(EmitContext& ctx);
 
 }  // namespace Dynarmic::Backend::Arm64

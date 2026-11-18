@@ -291,6 +291,9 @@ public:
     void PrepareForCall(std::optional<Argument::copyable_reference> arg0 = {}, std::optional<Argument::copyable_reference> arg1 = {}, std::optional<Argument::copyable_reference> arg2 = {}, std::optional<Argument::copyable_reference> arg3 = {});
 
     void DefineAsExisting(IR::Inst* inst, Argument& arg);
+    // Places inst in the location of an already defined value without emitting code. The caller vouches for
+    // what inst's readers see there (see the memory pairs in emit_arm64_memory.cpp).
+    void DefineAsExisting(IR::Inst* inst, const IR::Inst* existing);
     void DefineAsRegister(IR::Inst* inst, oaknut::Reg reg);
 
     void ReadWriteFlags(Argument& read, IR::Inst* write);
@@ -330,6 +333,8 @@ private:
 
     void LoadCopyInto(const IR::Value& value, oaknut::XReg reg);
     void LoadCopyInto(const IR::Value& value, oaknut::QReg reg);
+
+    void AddToLocationOf(IR::Inst* inst, const IR::Inst* existing);
 
     std::optional<HostLoc> ValueLocation(const IR::Inst* value) const;
     std::optional<HostLoc> FindValueLocation(const IR::Inst* value) const;

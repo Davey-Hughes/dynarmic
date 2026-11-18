@@ -48,6 +48,12 @@ template<>
 void EmitIR<IR::Opcode::Pack2x32To1x64>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
+    if (ctx.VfpMemory(inst).role == VfpMemoryRole::PairReadPack) {
+        // Both words are already in the low word's register (EmitPairedReadMemory() in emit_arm64_memory.cpp).
+        ctx.reg_alloc.DefineAsExisting(inst, args[0]);
+        return;
+    }
+
     auto Wlo = ctx.reg_alloc.ReadW(args[0]);
     auto Whi = ctx.reg_alloc.ReadW(args[1]);
     auto Xresult = ctx.reg_alloc.WriteX(inst);
@@ -100,6 +106,12 @@ template<>
 void EmitIR<IR::Opcode::LeastSignificantWord>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
 
+    if (ctx.VfpMemory(inst).role == VfpMemoryRole::PairWriteLsw) {
+        // The paired write stores the whole value (EmitPairedWriteMemory() in emit_arm64_memory.cpp).
+        ctx.reg_alloc.DefineAsExisting(inst, args[0]);
+        return;
+    }
+
     auto Wresult = ctx.reg_alloc.WriteW(inst);
     auto Xoperand = ctx.reg_alloc.ReadX(args[0]);
     RegAlloc::Realize(Wresult, Xoperand);
@@ -134,6 +146,13 @@ void EmitIR<IR::Opcode::MostSignificantWord>(oaknut::CodeGenerator& code, EmitCo
     const auto carry_inst = inst->GetAssociatedPseudoOperation(IR::Opcode::GetCarryFromOp);
 
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+
+    if (ctx.VfpMemory(inst).role == VfpMemoryRole::PairWriteMsw) {
+        // Read only by the second write of a pair, which emits nothing (EmitPairedWriteMemory() in
+        // emit_arm64_memory.cpp), so it needs no register of its own.
+        ctx.reg_alloc.DefineAsExisting(inst, args[0]);
+        return;
+    }
 
     auto Wresult = ctx.reg_alloc.WriteW(inst);
     auto Xoperand = ctx.reg_alloc.ReadX(args[0]);
@@ -1018,6 +1037,13 @@ static void EmitAddSub(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* 
 
 template<>
 void EmitIR<IR::Opcode::Add32>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+    if (ctx.VfpMemory(inst).role == VfpMemoryRole::PairHiAddress) {
+        // Read only by the second access of a pair, which emits nothing (emit_arm64_memory.cpp)
+        auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+        ctx.reg_alloc.DefineAsExisting(inst, args[0]);
+        return;
+    }
+
     EmitAddSub<32, false>(code, ctx, inst);
 }
 

@@ -5,7 +5,10 @@
 
 #include "dynarmic/backend/arm64/emit_arm64_memory.h"
 
+#include <algorithm>
+#include <iterator>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 #include <mcl/bit_cast.hpp>
@@ -651,10 +654,321 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
     code.l(*end);
 }
 
+// A pair (VfpMemoryRole) is served by one 64-bit host access on the page-table path, or on the fastmem path
+// with a 32-bit guest address space. Elsewhere its two accesses are emitted as usual.
+bool CanPairOnPageTable(const EmitContext& ctx) {
+    return ctx.conf.page_table_pointer != 0 && !ctx.conf.absolute_offset_page_table && (ctx.conf.detect_misaligned_access_via_page_table & (32 | 64)) == 0;
+}
+
+std::optional<DoNotFastmemMarker> PairFastmemMarker(EmitContext& ctx, IR::Inst* lo) {
+    return ShouldExt32(ctx) ? ShouldFastmem(ctx, lo) : std::nullopt;
+}
+
+// Emits the 64-bit access for a pair at Xaddr, or a branch to fallback when the page table path can't
+// serve both words (a page miss, or a pair that crosses into the next page) or the fastmem pair would
+// run past the 4 GiB arena. Returns the access's location for fastmem patching.
+template<typename T>
+CodePtr EmitPairAccess(oaknut::CodeGenerator& code, EmitContext& ctx, bool is_read, bool fastmem, oaknut::XReg Xaddr, T Rvalue, const SharedLabel& fallback) {
+    if (fastmem) {
+        code.CMN(Xaddr.toW(), 7);
+        code.B(CS, *fallback);
+    } else {
+        const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<64>(code, ctx, Xaddr, fallback);
+        ASSERT(Xbase.index() == Xscratch0.index() && Xoffset.index() == Xscratch1.index());
+        code.CMP(Xscratch1, page_size - 8);
+        code.B(HI, *fallback);
+    }
+
+    const CodePtr location = code.xptr<CodePtr>();
+    const auto Xbase = fastmem ? Xfastmem : Xscratch0;
+    const auto Roffset = fastmem ? oaknut::RReg{Xaddr.toW()} : oaknut::RReg{Xscratch1};
+    const auto ext = fastmem ? oaknut::IndexExt::UXTW : oaknut::IndexExt::LSL;
+    if (is_read) {
+        code.LDR(Rvalue, Xbase, Roffset, ext);
+    } else {
+        code.STR(Rvalue, Xbase, Roffset, ext);
+    }
+    return location;
+}
+
+void AddFastmemPatch(oaknut::CodeGenerator& code, EmitContext& ctx, CodePtr location, DoNotFastmemMarker marker) {
+    ctx.ebi.fastmem_patch_info.emplace(
+        location - ctx.ebi.entry_point,
+        FastmemPatchInfo{
+            .marker = marker,
+            .fc = FakeCall{
+                .call_pc = mcl::bit_cast<u64>(code.xptr<void*>()),
+            },
+            .recompile = ctx.conf.recompile_on_fastmem_failure,
+        });
+}
+
+// PairReadLo: both words into one FPR (the low word is lo's value). The fallback reads them one at a time
+// through the 32-bit callbacks, in the order the two accesses had.
+void EmitPairedReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* lo) {
+    auto args = ctx.reg_alloc.GetArgumentInfo(lo);
+    auto Xaddr = ctx.reg_alloc.ReadX(args[1]);
+    auto Dvalue = ctx.reg_alloc.WriteD(lo);
+    const bool fpsr_loaded = ctx.fpsr.IsLoaded();
+    ctx.reg_alloc.SpillFlags();
+    RegAlloc::Realize(Xaddr, Dvalue);
+
+    SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+    const auto marker = PairFastmemMarker(ctx, lo);
+    const CodePtr location = EmitPairAccess(code, ctx, true, marker.has_value(), *Xaddr, *Dvalue, fallback);
+
+    ctx.deferred_emits.emplace_back([&code, &ctx, lo, marker, location, Xaddr = *Xaddr, Dvalue = *Dvalue, fpsr_loaded, fallback, end] {
+        if (marker) {
+            AddFastmemPatch(code, ctx, location, *marker);
+        }
+
+        code.l(*fallback);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitSpillKeepState();
+        }
+        code.MOV(Xscratch0, Xaddr);
+        EmitRelocation(code, ctx, LinkTarget::WrappedReadMemory32);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitReZero();
+        }
+        code.FMOV(Dvalue.toS(), Wscratch0);
+        ctx.conf.emit_check_memory_abort(code, ctx, lo, *end);
+        code.ADD(Wscratch0, Xaddr.toW(), 4);
+        EmitRelocation(code, ctx, LinkTarget::WrappedReadMemory32);
+        if (fpsr_loaded) {
+            ctx.fpsr.EmitReZero();
+        }
+        code.MOV(Dvalue.Selem()[1], Wscratch0);
+        ctx.conf.emit_check_memory_abort(code, ctx, lo, *end);
+        code.B(*end);
+    });
+
+    code.l(*end);
+}
+
+// PairWriteLo: both words from the 64-bit value's register. The fallback writes them one at a time through
+// the 32-bit callbacks, in the order the two accesses had.
+void EmitPairedWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* lo) {
+    auto args = ctx.reg_alloc.GetArgumentInfo(lo);
+    auto Xaddr = ctx.reg_alloc.ReadX(args[1]);
+
+    const auto emit = [&](auto& Rvalue) {
+        constexpr bool is_fpr = std::is_same_v<std::decay_t<decltype(*Rvalue)>, oaknut::DReg>;
+
+        const bool fpsr_loaded = ctx.fpsr.IsLoaded();
+        ctx.reg_alloc.SpillFlags();
+        RegAlloc::Realize(Xaddr, Rvalue);
+
+        SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+        const auto marker = PairFastmemMarker(ctx, lo);
+        const CodePtr location = EmitPairAccess(code, ctx, false, marker.has_value(), *Xaddr, *Rvalue, fallback);
+
+        ctx.deferred_emits.emplace_back([&code, &ctx, lo, marker, location, Xaddr = *Xaddr, Rvalue = *Rvalue, fpsr_loaded, fallback, end] {
+            if (marker) {
+                AddFastmemPatch(code, ctx, location, *marker);
+            }
+
+            code.l(*fallback);
+            if (fpsr_loaded) {
+                ctx.fpsr.EmitSpillKeepState();
+            }
+            code.MOV(Xscratch0, Xaddr);
+            if constexpr (is_fpr) {
+                code.FMOV(Wscratch1, Rvalue.toS());
+            } else {
+                code.MOV(Wscratch1, Rvalue.toW());
+            }
+            EmitRelocation(code, ctx, LinkTarget::WrappedWriteMemory32);
+            if (fpsr_loaded) {
+                ctx.fpsr.EmitReZero();
+            }
+            ctx.conf.emit_check_memory_abort(code, ctx, lo, *end);
+            code.ADD(Wscratch0, Xaddr.toW(), 4);
+            if constexpr (is_fpr) {
+                code.UMOV(Wscratch1, Rvalue.Selem()[1]);
+            } else {
+                code.LSR(Xscratch1, Rvalue, 32);
+            }
+            EmitRelocation(code, ctx, LinkTarget::WrappedWriteMemory32);
+            if (fpsr_loaded) {
+                ctx.fpsr.EmitReZero();
+            }
+            ctx.conf.emit_check_memory_abort(code, ctx, lo, *end);
+            code.B(*end);
+        });
+
+        code.l(*end);
+    };
+
+    if (args[2].IsInGpr()) {
+        auto Xvalue = ctx.reg_alloc.ReadX(args[2]);
+        emit(Xvalue);
+    } else {
+        auto Dvalue = ctx.reg_alloc.ReadD(args[2]);
+        emit(Dvalue);
+    }
+}
+
+IR::AccType AccTypeOf(const IR::Inst* access) {
+    return access->GetArg(access->NumArgs() - 1).GetAccType();
+}
+
+// Same guest instruction, same unordered access type.
+bool IsSameAccess(const IR::Inst* a, const IR::Inst* b) {
+    return a->GetArg(0).GetU64() == b->GetArg(0).GetU64() && AccTypeOf(a) == AccTypeOf(b) && !IsOrdered(AccTypeOf(a));
+}
+
+// Whether hi is lo + 4 as the frontend computes it: Add32(lo, 4), or both an immediate or Add32(base, imm)
+// offset from the same base.
+bool IsNextWord(const IR::Value& lo, const IR::Value& hi) {
+    struct Split {
+        const IR::Inst* base;  // nullptr: an immediate address
+        u32 offset;
+    };
+    const auto split = [](const IR::Value& address) -> Split {
+        if (address.IsImmediate()) {
+            return {nullptr, static_cast<u32>(address.GetImmediateAsU64())};
+        }
+        const IR::Inst* inst = address.GetInst();
+        if (inst->GetOpcode() == IR::Opcode::Add32 && !inst->GetArg(0).IsImmediate() && inst->GetArg(1).IsImmediate() && inst->GetArg(2).IsImmediate() && !inst->GetArg(2).GetU1()) {
+            return {inst->GetArg(0).GetInst(), inst->GetArg(1).GetU32()};
+        }
+        return {inst, 0};
+    };
+
+    const Split l = split(lo), h = split(hi);
+    if (!lo.IsImmediate() && h.base == lo.GetInst() && h.offset == 4) {
+        return true;
+    }
+    return l.base == h.base && h.offset == l.offset + 4;
+}
+
+// What may sit between a pair's two accesses: address arithmetic, which reading or writing the second word
+// early can't affect.
+bool IsAddressArithmetic(const IR::Inst& inst) {
+    return inst.GetOpcode() == IR::Opcode::Add32 || inst.GetOpcode() == IR::Opcode::Sub32;
+}
+
+// The first instruction after from that isn't address arithmetic, or nullptr.
+IR::Inst* NextAccess(IR::Block& block, IR::Inst* from) {
+    for (auto iter = std::next(IR::Block::iterator{from}); iter != block.end(); ++iter) {
+        if (!IsAddressArithmetic(*iter)) {
+            return &*iter;
+        }
+    }
+    return nullptr;
+}
+
 }  // namespace
+
+void AssignVfpMemoryRoles(EmitContext& ctx) {
+    auto& roles = ctx.vfp_memory;
+    roles.clear();
+
+    size_t max_name = 0;
+    for (const auto& inst : ctx.block) {
+        max_name = std::max<size_t>(max_name, inst.GetName());
+    }
+    roles.resize(max_name + 1);
+
+    const auto set = [&](const IR::Inst* inst, VfpMemoryRole role, const IR::Inst* partner = nullptr) {
+        roles[inst->GetName()] = {role, partner};
+    };
+    const auto is_unassigned = [&](const IR::Inst* inst) {
+        return inst->GetName() != 0 && roles[inst->GetName()].role == VfpMemoryRole::None;
+    };
+    const auto only_use_is = [](const IR::Value& value, IR::Opcode opcode) {
+        return !value.IsImmediate() && value.GetInst()->GetOpcode() == opcode && value.GetInst()->UseCount() == 1;
+    };
+
+    const bool page_table = CanPairOnPageTable(ctx);
+    const auto can_pair = [&](IR::Inst* lo) {
+        return page_table || PairFastmemMarker(ctx, lo).has_value();
+    };
+    // The paired access computes the second address itself.
+    const auto drop_hi_address = [&](const IR::Inst* hi) {
+        if (only_use_is(hi->GetArg(1), IR::Opcode::Add32) && is_unassigned(hi->GetArg(1).GetInst())) {
+            set(hi->GetArg(1).GetInst(), VfpMemoryRole::PairHiAddress);
+        }
+    };
+
+    for (auto& inst : ctx.block) {
+        switch (inst.GetOpcode()) {
+        case IR::Opcode::Pack2x32To1x64: {
+            // %lo = A32ReadMemory32 a; [address arithmetic]; %hi = A32ReadMemory32 a+4; ...; Pack2x32To1x64 %lo, %hi
+            if (!only_use_is(inst.GetArg(0), IR::Opcode::A32ReadMemory32) || !only_use_is(inst.GetArg(1), IR::Opcode::A32ReadMemory32)) {
+                break;
+            }
+            IR::Inst* const lo = inst.GetArg(0).GetInst();
+            IR::Inst* const hi = inst.GetArg(1).GetInst();
+            if (!is_unassigned(lo) || !is_unassigned(hi) || !is_unassigned(&inst) || NextAccess(ctx.block, lo) != hi) {
+                break;
+            }
+            if (!IsSameAccess(lo, hi) || !IsNextWord(lo->GetArg(1), hi->GetArg(1)) || !can_pair(lo)) {
+                break;
+            }
+            set(lo, VfpMemoryRole::PairReadLo);
+            set(hi, VfpMemoryRole::PairReadHi, lo);
+            set(&inst, VfpMemoryRole::PairReadPack);
+            drop_hi_address(hi);
+            break;
+        }
+        case IR::Opcode::A32WriteMemory32: {
+            const IR::Value value = inst.GetArg(2);
+            if (only_use_is(value, IR::Opcode::A32GetExtendedRegister32) && is_unassigned(value.GetInst())) {
+                set(value.GetInst(), VfpMemoryRole::StoreValueToGpr);
+                break;
+            }
+
+            // A32WriteMemory32 a, LeastSignificantWord %d; [address arithmetic]; A32WriteMemory32 a+4, MostSignificantWord %d
+            if (!only_use_is(value, IR::Opcode::LeastSignificantWord) || value.GetInst()->GetArg(0).IsImmediate()) {
+                break;
+            }
+            IR::Inst* const lo = &inst;
+            IR::Inst* const hi = NextAccess(ctx.block, lo);
+            if (!hi || hi->GetOpcode() != IR::Opcode::A32WriteMemory32 || !only_use_is(hi->GetArg(2), IR::Opcode::MostSignificantWord)) {
+                break;
+            }
+            IR::Inst* const lsw = value.GetInst();
+            IR::Inst* const msw = hi->GetArg(2).GetInst();
+            if (msw->GetArg(0).IsImmediate() || msw->GetArg(0).GetInst() != lsw->GetArg(0).GetInst()) {
+                break;
+            }
+            if (!is_unassigned(lo) || !is_unassigned(hi) || !is_unassigned(lsw) || !is_unassigned(msw)) {
+                break;
+            }
+            if (!IsSameAccess(lo, hi) || !IsNextWord(lo->GetArg(1), hi->GetArg(1)) || !can_pair(lo)) {
+                break;
+            }
+            set(lsw, VfpMemoryRole::PairWriteLsw);
+            set(msw, VfpMemoryRole::PairWriteMsw);
+            set(lo, VfpMemoryRole::PairWriteLo);
+            set(hi, VfpMemoryRole::PairWriteHi);
+            drop_hi_address(hi);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
 
 template<size_t bitsize>
 void EmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+    if constexpr (bitsize == 32) {
+        switch (const auto info = ctx.VfpMemory(inst); info.role) {
+        case VfpMemoryRole::PairReadLo:
+            EmitPairedReadMemory(code, ctx, inst);
+            return;
+        case VfpMemoryRole::PairReadHi:
+            ctx.reg_alloc.GetArgumentInfo(inst);
+            ctx.reg_alloc.DefineAsExisting(inst, info.partner);
+            return;
+        default:
+            break;
+        }
+    }
+
     if (const auto marker = ShouldFastmem(ctx, inst)) {
         FastmemEmitReadMemory<bitsize>(code, ctx, inst, *marker);
     } else if (ctx.conf.page_table_pointer != 0) {
@@ -671,6 +985,19 @@ void EmitExclusiveReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::
 
 template<size_t bitsize>
 void EmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+    if constexpr (bitsize == 32) {
+        switch (ctx.VfpMemory(inst).role) {
+        case VfpMemoryRole::PairWriteLo:
+            EmitPairedWriteMemory(code, ctx, inst);
+            return;
+        case VfpMemoryRole::PairWriteHi:
+            ctx.reg_alloc.GetArgumentInfo(inst);
+            return;
+        default:
+            break;
+        }
+    }
+
     if (const auto marker = ShouldFastmem(ctx, inst)) {
         FastmemEmitWriteMemory<bitsize>(code, ctx, inst, *marker);
     } else if (ctx.conf.page_table_pointer != 0) {

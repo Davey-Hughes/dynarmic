@@ -971,16 +971,20 @@ CATCH_REGISTER_LISTENER(JitSignalHandlerCapture)
 namespace {
 
 // Reserves 4 GiB PROT_NONE: every host address the JIT forms from a 32-bit guest address lands inside it.
+// The page right after the arena is readable and filled with 0xee, so an access that runs past the end of
+// the arena reads junk instead of faulting.
 class FastmemArena final {
 public:
     static constexpr size_t size = size_t(1) << 32;
 
     FastmemArena() {
-        void* p = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        void* p = mmap(nullptr, size + 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
         REQUIRE(p != MAP_FAILED);
         base = static_cast<u8*>(p);
+        REQUIRE(mprotect(base + size, 4096, PROT_READ | PROT_WRITE) == 0);
+        std::memset(base + size, 0xee, 4096);
     }
-    ~FastmemArena() { munmap(base, size); }
+    ~FastmemArena() { munmap(base, size + 4096); }
 
     FastmemArena(const FastmemArena&) = delete;
     FastmemArena& operator=(const FastmemArena&) = delete;
@@ -1073,6 +1077,11 @@ public:
     u32 Peek32(u32 vaddr) {
         return u32(Peek8(vaddr)) | u32(Peek8(vaddr + 1)) << 8 | u32(Peek8(vaddr + 2)) << 16 | u32(Peek8(vaddr + 3)) << 24;
     }
+    // A write that isn't counted as a callback.
+    void Poke32(u32 vaddr, u32 value) {
+        MemoryWrite32(vaddr, value);
+        data_callbacks -= 4;
+    }
 
     std::uint8_t MemoryRead8(u32 vaddr) override {
         if (IsInCodeMem(vaddr)) {
@@ -1099,7 +1108,12 @@ private:
         if (IsFastmem()) {
             return arena->Page(page);
         }
-        return backing.data() + size_t(2 * (first_page + page_count - 1 - page)) * 4096;
+        if (page >= first_page && page < first_page + page_count) {
+            return backing.data() + size_t(2 * (first_page + page_count - 1 - page)) * 4096;
+        }
+        auto& extra = extra_pages[page];
+        extra.resize(4096);
+        return extra.data();
     }
 
     void Sync(u32 page) {
@@ -1114,6 +1128,7 @@ private:
     std::unique_ptr<std::array<u8*, A32::UserConfig::NUM_PAGE_TABLE_ENTRIES>> page_table;
     std::optional<FastmemArena> arena;
     std::vector<u8> backing;
+    std::map<u32, std::vector<u8>> extra_pages;  // page-table modes, outside first_page..
     std::set<u32> mapped;
     std::map<u32, u8> device;
 };
@@ -1185,8 +1200,10 @@ TEST_CASE("arm: VFP loads and stores", "[arm][A32][fpmem]") {
             REQUIRE(jit.ExtRegs()[i] == (iter != loaded.end() ? iter->second : sentinel(i)));
         }
     };
-    // With every page mapped, only the callbacks mode may call back for data.
+    // With every page mapped, only the callbacks mode may call back for data, except that on the page-table
+    // path a D register that straddles two pages may be served by the callbacks.
     bool all_mapped = true;
+    bool straddles = false;
     const auto split_pages = [&] {
         SECTION("second page mapped") {}
         SECTION("second page unmapped") {
@@ -1229,11 +1246,46 @@ TEST_CASE("arm: VFP loads and stores", "[arm][A32][fpmem]") {
     }
     SECTION("D across a page boundary") {
         split_pages();
+        straddles = true;
         vldr_vstr_d(0x10ffc, 0x12ffc);
+    }
+
+    SECTION("D at the top of the address space") {
+        // The second word wraps around to address 0, code memory, which only the callbacks serve.
+        env.Map(0xfffff);
+        all_mapped = false;
+        env.code_mem = {0xed903b00, 0xed814b00, 0xeafffffe};  // vldr d3, [r0]; vstr d4, [r1]; b .
+        body = [&] {
+            const u32 address = 0xfffffffc;
+            const u32 lo = env.Peek32(address), hi = env.MemoryRead32(0);
+            set_up(address, address);
+            run(0, 3);
+            check_ext({{6, lo}, {7, hi}});
+            REQUIRE(env.Peek32(address) == sentinel(8));
+            REQUIRE(env.Peek32(0) == sentinel(9));
+        };
+    }
+
+    SECTION("D used in the same block") {
+        // vldr d3, [r0]; vadd.f64 d4, d3, d3; vmov r2, r3, d3; vstr d4, [r1]; b .
+        env.code_mem = {0xed903b00, 0xee334b03, 0xec532b13, 0xed814b00, 0xeafffffe};
+        body = [&] {
+            const u32 r0 = 0x10040, r1 = 0x11080;
+            env.Poke32(r0, 0x00000000);
+            env.Poke32(r0 + 4, 0x3ff80000);  // 1.5
+            set_up(r0, r1);
+            run(0, 5);
+            check_ext({{6, 0x00000000}, {7, 0x3ff80000}, {8, 0x00000000}, {9, 0x40080000}});  // d4 = 3.0
+            REQUIRE(jit.Regs()[2] == 0x00000000);
+            REQUIRE(jit.Regs()[3] == 0x3ff80000);
+            REQUIRE(env.Peek32(r1) == 0x00000000);
+            REQUIRE(env.Peek32(r1 + 4) == 0x40080000);
+        };
     }
 
     SECTION("VLDM/VSTM") {
         split_pages();
+        straddles = true;
         // vstmia r1, {d8-d10}; vldmia r0, {d8-d10}; b .
         env.code_mem = {0xec818b06, 0xec908b06, 0xeafffffe};
         body = [&] {
@@ -1306,7 +1358,7 @@ TEST_CASE("arm: VFP loads and stores", "[arm][A32][fpmem]") {
 
     const auto run_body = [&] {
         body();
-        if (all_mapped) {
+        if (all_mapped && !(straddles && mode == VfpMemMode::PageTable)) {
             REQUIRE((env.data_callbacks == 0) == (mode != VfpMemMode::Callbacks));
         }
     };

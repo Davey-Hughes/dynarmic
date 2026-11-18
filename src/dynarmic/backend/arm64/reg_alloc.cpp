@@ -216,7 +216,21 @@ void RegAlloc::DefineAsExisting(IR::Inst* inst, Argument& arg) {
         return;
     }
 
-    const auto location = ValueLocation(arg.value.GetInst());
+    AddToLocationOf(inst, arg.value.GetInst());
+}
+
+void RegAlloc::DefineAsExisting(IR::Inst* inst, const IR::Inst* existing) {
+    MarkDefined(inst);
+
+#ifndef MCL_IGNORE_ASSERTS
+    ASSERT(!ValueLocation(inst));
+#endif
+
+    AddToLocationOf(inst, existing);
+}
+
+void RegAlloc::AddToLocationOf(IR::Inst* inst, const IR::Inst* existing) {
+    const auto location = ValueLocation(existing);
     ASSERT_MSG(location, "RegAlloc::ValueInfo: Value not found");
     auto& info = ValueInfo(*location);
     info.values.push_back(inst);

@@ -215,6 +215,13 @@ void EmitIR<IR::Opcode::A32GetExtendedRegister32>(oaknut::CodeGenerator& code, E
     ASSERT(A32::IsSingleExtReg(reg));
     const size_t index = static_cast<size_t>(reg) - static_cast<size_t>(A32::ExtReg::S0);
 
+    if (ctx.VfpMemory(inst).role == VfpMemoryRole::StoreValueToGpr) {
+        auto Wresult = ctx.reg_alloc.WriteW(inst);
+        RegAlloc::Realize(Wresult);
+        code.LDR(Wresult, Xstate, offsetof(A32JitState, ext_regs) + sizeof(u32) * index);
+        return;
+    }
+
     auto Sresult = ctx.reg_alloc.WriteS(inst);
     RegAlloc::Realize(Sresult);
 
@@ -276,6 +283,15 @@ void EmitIR<IR::Opcode::A32SetExtendedRegister32>(oaknut::CodeGenerator& code, E
     const size_t index = static_cast<size_t>(reg) - static_cast<size_t>(A32::ExtReg::S0);
 
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+
+    if (args[1].IsInGpr()) {
+        // e.g. a VFP load's value: store it from where it is
+        auto Wvalue = ctx.reg_alloc.ReadW(args[1]);
+        RegAlloc::Realize(Wvalue);
+        code.STR(Wvalue, Xstate, offsetof(A32JitState, ext_regs) + sizeof(u32) * index);
+        return;
+    }
+
     auto Svalue = ctx.reg_alloc.ReadS(args[1]);
     RegAlloc::Realize(Svalue);
 
@@ -291,6 +307,14 @@ void EmitIR<IR::Opcode::A32SetExtendedRegister64>(oaknut::CodeGenerator& code, E
     const size_t index = static_cast<size_t>(reg) - static_cast<size_t>(A32::ExtReg::D0);
 
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+
+    if (args[1].IsInGpr()) {
+        auto Xvalue = ctx.reg_alloc.ReadX(args[1]);
+        RegAlloc::Realize(Xvalue);
+        code.STR(Xvalue, Xstate, offsetof(A32JitState, ext_regs) + 2 * sizeof(u32) * index);
+        return;
+    }
+
     auto Dvalue = ctx.reg_alloc.ReadD(args[1]);
     RegAlloc::Realize(Dvalue);
 

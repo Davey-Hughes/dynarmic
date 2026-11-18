@@ -8,6 +8,7 @@
 #include <oaknut/oaknut.hpp>
 
 #include "dynarmic/backend/arm64/abi.h"
+#include "dynarmic/backend/arm64/emit_arm64_memory.h"
 #include "dynarmic/backend/arm64/emit_context.h"
 #include "dynarmic/backend/arm64/fpsr_manager.h"
 #include "dynarmic/backend/arm64/reg_alloc.h"
@@ -200,7 +201,8 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
 
     FpsrManager fpsr_manager{code, conf.state_fpsr_offset};
     RegAlloc reg_alloc{code, fpsr_manager, {GPR_ORDER.begin(), GPR_ORDER.end()}, {FPR_ORDER.begin(), FPR_ORDER.end()}, buffers.reg_alloc};
-    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits};
+    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits, buffers.vfp_memory};
+    AssignVfpMemoryRoles(ctx);
 
     ebi.entry_point = code.xptr<CodePtr>();
 
