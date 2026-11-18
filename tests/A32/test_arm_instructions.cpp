@@ -3,11 +3,28 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <functional>
+#include <memory>
+#include <optional>
+#include <set>
+
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <mcl/bit/swap.hpp>
+#include <mcl/macro/architecture.hpp>
+
+#ifndef _WIN32
+#    include <csignal>
+
+#    include <catch2/reporters/catch_reporter_event_listener.hpp>
+#    include <catch2/reporters/catch_reporter_registrars.hpp>
+#    include <sys/mman.h>
+#endif
 
 #include "./testenv.h"
 #include "dynarmic/frontend/A32/a32_location_descriptor.h"
 #include "dynarmic/interface/A32/a32.h"
+#include "dynarmic/interface/exclusive_monitor.h"
 
 using namespace Dynarmic;
 
@@ -702,3 +719,605 @@ TEST_CASE("arm: tbx", "[arm][A32]") {
     REQUIRE(jit.ExtRegs()[19 * 2 + 0] == 0x05'02'01'00);
     REQUIRE(jit.ExtRegs()[19 * 2 + 1] == 0x20'1F'10'0F);
 }
+
+namespace {
+
+constexpr u32 fpscr_ioc = 1 << 0;
+constexpr u32 fpscr_dzc = 1 << 1;
+constexpr u32 fpscr_ixc = 1 << 4;
+
+constexpr u32 fp_data_address = 0x10000;
+
+// Sets the host divide-by-zero flag: FPSR.DZC on arm64, MXCSR.ZE on x64.
+void RaiseHostDivByZero() {
+    volatile float z = 0.0f;
+    volatile float r = 1.0f / z;
+    (void)r;
+}
+
+// Memory callbacks that do host float work, as an emulator's C++ memory handlers may.
+class HostFloatTestEnv final : public ArmTestEnv {
+public:
+    size_t data_callbacks = 0;
+    std::optional<u32> read32_value;
+
+    std::uint32_t MemoryRead32(u32 vaddr) override {
+        data_callbacks++;
+        RaiseHostDivByZero();
+        return read32_value ? *read32_value : ArmTestEnv::MemoryRead32(vaddr);
+    }
+    void MemoryWrite32(u32 vaddr, std::uint32_t value) override {
+        data_callbacks++;
+        RaiseHostDivByZero();
+        ArmTestEnv::MemoryWrite32(vaddr, value);
+    }
+    bool MemoryWriteExclusive32(u32 vaddr, std::uint32_t value, std::uint32_t) override {
+        MemoryWrite32(vaddr, value);
+        return true;
+    }
+
+    u32 Written32(u32 vaddr) const {
+        u32 value = 0;
+        for (u32 i = 0; i < 4; i++) {
+            value |= u32(modified_memory.at(vaddr + i)) << (8 * i);
+        }
+        return value;
+    }
+};
+
+// vdiv.f32 s0, s1, s2 (1.0 / 3.0 raises IXC); memops; vadd.f32 s3, s0, s0 (exact); vmrs r0, fpscr; b .
+std::vector<u32> FpAroundMemory(const std::vector<u32>& memops) {
+    std::vector<u32> code{0xee800a81};
+    code.insert(code.end(), memops.begin(), memops.end());
+    code.push_back(0xee701a00);
+    code.push_back(0xeef10a10);
+    code.push_back(0xeafffffe);
+    return code;
+}
+
+void SetUpFpAroundMemory(A32::Jit& jit) {
+    jit.Regs() = {};
+    jit.Regs()[1] = 0x0badf00d;
+    jit.Regs()[2] = fp_data_address;
+    jit.ExtRegs() = {};
+    jit.ExtRegs()[1] = 0x3f800000;  // 1.0f
+    jit.ExtRegs()[2] = 0x40400000;  // 3.0f
+    jit.SetFpscr(0);
+    jit.SetCpsr(0x000001d0);  // User-mode
+}
+
+void CheckFpAroundMemoryFlags(A32::Jit& jit) {
+    INFO("guest fpscr " << std::hex << jit.Regs()[0]);
+    REQUIRE((jit.Regs()[0] & fpscr_ixc) != 0);
+#ifdef MCL_ARCHITECTURE_ARM64
+    // The arm64 backend saves FPSR before calling into C++ and clears it after. The x64 backend keeps the
+    // guest MXCSR across memory callbacks, so host float work there does reach the guest flags.
+    REQUIRE((jit.Regs()[0] & fpscr_dzc) == 0);
+    REQUIRE((jit.Fpscr() & fpscr_dzc) == 0);
+#endif
+}
+
+}  // namespace
+
+TEST_CASE("arm: FPSCR cumulative flags across memory callbacks", "[arm][A32][fpmem]") {
+    std::vector<u32> memops;
+    SECTION("ldr") {
+        memops = {0xe5921000};  // ldr r1, [r2]
+    }
+    SECTION("str") {
+        memops = {0xe5821000};  // str r1, [r2]
+    }
+    SECTION("ldrex/strex") {
+        memops = {0xe1921f9f, 0xe1823f91};  // ldrex r1, [r2]; strex r3, r1, [r2]
+    }
+
+    HostFloatTestEnv env;
+    ExclusiveMonitor monitor{1};
+    A32::UserConfig config = GetUserConfig(&env);
+    config.global_monitor = &monitor;
+    config.processor_id = 0;
+    A32::Jit jit{config};
+
+    env.code_mem = FpAroundMemory(memops);
+    SetUpFpAroundMemory(jit);
+    env.ticks_left = env.code_mem.size();
+    jit.Run();
+
+    REQUIRE(env.data_callbacks == memops.size());
+    CheckFpAroundMemoryFlags(jit);
+}
+
+TEST_CASE("arm: FPSCR cumulative flags across page-table memory accesses", "[arm][A32][fpmem]") {
+    const u32 memop = GENERATE(as<u32>{}, 0xe5921000, 0xe5821000);  // ldr r1, [r2]; str r1, [r2]
+
+    auto page_table = std::make_unique<std::array<u8*, A32::UserConfig::NUM_PAGE_TABLE_ENTRIES>>();
+    std::array<u8, 4096> page{};
+    size_t expected_callbacks = 0;
+    SECTION("hit") {
+        (*page_table)[fp_data_address >> 12] = page.data();
+    }
+    SECTION("miss") {
+        expected_callbacks = 1;
+    }
+
+    HostFloatTestEnv env;
+    A32::UserConfig config = GetUserConfig(&env);
+    config.page_table = page_table.get();
+    A32::Jit jit{config};
+
+    env.code_mem = FpAroundMemory({memop});
+    SetUpFpAroundMemory(jit);
+    env.ticks_left = env.code_mem.size();
+    jit.Run();
+
+    REQUIRE(env.data_callbacks == expected_callbacks);
+    CheckFpAroundMemoryFlags(jit);
+}
+
+TEST_CASE("arm: VCMP and VMRS APSR_nzcv with every condition", "[arm][A32][fpmem]") {
+    struct Compare {
+        const char* name;
+        u32 vcmp;
+        u32 s0;
+        u32 s1;
+        u32 nzcv;
+        bool ioc;
+    };
+    // vcmp.f32 s0, s1 = 0xeeb40a60, vcmpe.f32 s0, s1 = 0xeeb40ae0
+    const Compare c = GENERATE(values<Compare>({
+        {"less", 0xeeb40a60, 0x3f800000, 0x40000000, 0b1000, false},
+        {"equal", 0xeeb40a60, 0x40000000, 0x40000000, 0b0110, false},
+        {"greater", 0xeeb40a60, 0x40400000, 0x40000000, 0b0010, false},
+        {"qnan first", 0xeeb40a60, 0x7fc00000, 0x3f800000, 0b0011, false},
+        {"qnan second", 0xeeb40a60, 0x3f800000, 0x7fc00000, 0b0011, false},
+        {"vcmpe snan", 0xeeb40ae0, 0x7f800001, 0x3f800000, 0b0011, true},
+    }));
+    const bool branch = GENERATE(false, true);
+
+    // EQ NE CS CC MI PL VS VC HI LS GE LT GT LE
+    const auto holds = [](u32 cond, u32 nzcv) {
+        const bool n = nzcv & 8, z = nzcv & 4, cf = nzcv & 2, v = nzcv & 1;
+        const std::array<bool, 14> table{z, !z, cf, !cf, n, !n, v, !v, cf && !z, !cf || z, n == v, n != v, !z && n == v, z || n != v};
+        return table[cond];
+    };
+
+    for (u32 cond = 0; cond < 14; cond++) {
+        INFO(c.name << (branch ? ", b" : ", mov") << " cond " << cond);
+
+        ArmTestEnv env;
+        A32::Jit jit{GetUserConfig(&env)};
+        if (!branch) {
+            env.code_mem = {
+                c.vcmp,
+                0xeef1fa10,                  // vmrs APSR_nzcv, fpscr
+                0xe3a00000,                  // mov r0, #0
+                (cond << 28) | 0x03a00001,   // mov<cond> r0, #1
+                0xeef11a10,                  // vmrs r1, fpscr
+                0xeafffffe,                  // b .
+            };
+        } else {
+            env.code_mem = {
+                c.vcmp,
+                0xeef1fa10,                  // vmrs APSR_nzcv, fpscr
+                0xe3a00000,                  // mov r0, #0
+                (cond << 28) | 0x0a000001,   // b<cond> +8
+                0xeef11a10,                  // vmrs r1, fpscr
+                0xeafffffe,                  // b .
+                0xe3a00001,                  // mov r0, #1
+                0xeef11a10,                  // vmrs r1, fpscr
+                0xeafffffe,                  // b .
+            };
+        }
+        jit.ExtRegs()[0] = c.s0;
+        jit.ExtRegs()[1] = c.s1;
+        jit.SetFpscr(0);
+        jit.SetCpsr(((~c.nzcv & 0xf) << 28) | 0x000001d0);  // User-mode, every flag the opposite of the result
+        env.ticks_left = env.code_mem.size();
+        jit.Run();
+
+        REQUIRE(jit.Regs()[0] == u32(holds(cond, c.nzcv)));
+        REQUIRE(jit.Cpsr() >> 28 == c.nzcv);
+        REQUIRE(jit.Regs()[1] >> 28 == c.nzcv);
+        REQUIRE(jit.Fpscr() >> 28 == c.nzcv);
+        REQUIRE(((jit.Regs()[1] & fpscr_ioc) != 0) == c.ioc);
+    }
+}
+
+#ifndef _WIN32
+
+namespace {
+
+// Catch2 installs its own SIGSEGV handler around each test case, which would take the fastmem faults meant for
+// dynarmic's handler. Capture dynarmic's handler before any test case runs; JitSignalHandlerScope puts it back
+// while a fastmem test runs the JIT.
+class JitSignalHandlerCapture final : public Catch::EventListenerBase {
+public:
+    using Catch::EventListenerBase::EventListenerBase;
+
+    void testRunStarting(const Catch::TestRunInfo&) override {
+        ArmTestEnv env;
+        A32::Jit jit{GetUserConfig(&env)};  // the first Jit installs dynarmic's handler
+        sigaction(SIGSEGV, nullptr, &jit_segv);
+        sigaction(SIGBUS, nullptr, &jit_bus);
+    }
+
+    static inline struct sigaction jit_segv {};
+    static inline struct sigaction jit_bus {};
+};
+
+class JitSignalHandlerScope final {
+public:
+    JitSignalHandlerScope() {
+        sigaction(SIGSEGV, &JitSignalHandlerCapture::jit_segv, &saved_segv);
+        sigaction(SIGBUS, &JitSignalHandlerCapture::jit_bus, &saved_bus);
+    }
+    ~JitSignalHandlerScope() {
+        sigaction(SIGSEGV, &saved_segv, nullptr);
+        sigaction(SIGBUS, &saved_bus, nullptr);
+    }
+
+    JitSignalHandlerScope(const JitSignalHandlerScope&) = delete;
+    JitSignalHandlerScope& operator=(const JitSignalHandlerScope&) = delete;
+
+private:
+    struct sigaction saved_segv {};
+    struct sigaction saved_bus {};
+};
+
+}  // namespace
+
+CATCH_REGISTER_LISTENER(JitSignalHandlerCapture)
+
+namespace {
+
+// Reserves 4 GiB PROT_NONE: every host address the JIT forms from a 32-bit guest address lands inside it.
+class FastmemArena final {
+public:
+    static constexpr size_t size = size_t(1) << 32;
+
+    FastmemArena() {
+        void* p = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        REQUIRE(p != MAP_FAILED);
+        base = static_cast<u8*>(p);
+    }
+    ~FastmemArena() { munmap(base, size); }
+
+    FastmemArena(const FastmemArena&) = delete;
+    FastmemArena& operator=(const FastmemArena&) = delete;
+
+    u8* Page(u32 page) const { return base + size_t(page) * 4096; }
+    void Protect(u32 page, bool accessible) const {
+        REQUIRE(mprotect(Page(page), 4096, accessible ? PROT_READ | PROT_WRITE : PROT_NONE) == 0);
+    }
+
+    u8* base;
+};
+
+enum class VfpMemMode {
+    Callbacks,
+    PageTable,
+    Fastmem,           // recompiled blocks use the callbacks
+    FastmemPageTable,  // recompiled blocks use the page table
+};
+
+// Guest data pages 0x10-0x13; guest code at 0, fetched through MemoryReadCode. Mapped pages are reachable
+// inline (page table, fastmem) and through the callbacks. Unmapped pages are served only by the callbacks,
+// from a separate device pattern. In page-table mode the guest pages sit on non-adjacent host pages in reverse
+// order, so an inline access that ran past the end of a page on the host would read the wrong data.
+class VfpMemoryTestEnv final : public ArmTestEnv {
+public:
+    static constexpr u32 first_page = 0x10;
+    static constexpr u32 page_count = 4;
+
+    size_t data_callbacks = 0;
+
+    explicit VfpMemoryTestEnv(VfpMemMode mode)
+            : mode{mode}
+            , page_table{std::make_unique<std::array<u8*, A32::UserConfig::NUM_PAGE_TABLE_ENTRIES>>()} {
+        if (IsFastmem()) {
+            arena.emplace();
+        } else {
+            backing.resize(2 * page_count * 4096);
+        }
+        for (u32 page = first_page; page < first_page + page_count; page++) {
+            Map(page);
+        }
+        Reset();
+    }
+
+    A32::UserConfig Config() {
+        A32::UserConfig config = GetUserConfig(this);
+        if (HasPageTable()) {
+            config.page_table = page_table.get();
+        }
+        if (IsFastmem()) {
+            config.fastmem_pointer = reinterpret_cast<uintptr_t>(arena->base);
+            config.recompile_on_fastmem_failure = true;
+        }
+        return config;
+    }
+
+    void Map(u32 page) {
+        mapped.insert(page);
+        Sync(page);
+    }
+    void Unmap(u32 page) {
+        mapped.erase(page);
+        Sync(page);
+    }
+
+    bool IsFastmem() const { return mode == VfpMemMode::Fastmem || mode == VfpMemMode::FastmemPageTable; }
+    bool HasPageTable() const { return mode == VfpMemMode::PageTable || mode == VfpMemMode::FastmemPageTable; }
+
+    // Refills the mapped pages and forgets the device writes and the callback count.
+    void Reset() {
+        device.clear();
+        data_callbacks = 0;
+        for (u32 page : mapped) {
+            for (u32 i = 0; i < 4096; i++) {
+                HostPage(page)[i] = MappedPattern(page * 4096 + i);
+            }
+        }
+    }
+
+    u8 Peek8(u32 vaddr) {
+        const u32 page = vaddr >> 12;
+        if (mapped.count(page)) {
+            return HostPage(page)[vaddr & 0xfff];
+        }
+        if (const auto iter = device.find(vaddr); iter != device.end()) {
+            return iter->second;
+        }
+        return DevicePattern(vaddr);
+    }
+    u32 Peek32(u32 vaddr) {
+        return u32(Peek8(vaddr)) | u32(Peek8(vaddr + 1)) << 8 | u32(Peek8(vaddr + 2)) << 16 | u32(Peek8(vaddr + 3)) << 24;
+    }
+
+    std::uint8_t MemoryRead8(u32 vaddr) override {
+        if (IsInCodeMem(vaddr)) {
+            return ArmTestEnv::MemoryRead8(vaddr);
+        }
+        data_callbacks++;
+        return Peek8(vaddr);
+    }
+    void MemoryWrite8(u32 vaddr, std::uint8_t value) override {
+        data_callbacks++;
+        const u32 page = vaddr >> 12;
+        if (mapped.count(page)) {
+            HostPage(page)[vaddr & 0xfff] = value;
+        } else {
+            device[vaddr] = value;
+        }
+    }
+
+private:
+    static u8 MappedPattern(u32 vaddr) { return u8(vaddr * 7 + (vaddr >> 8) * 13 + 0x5b); }
+    static u8 DevicePattern(u32 vaddr) { return u8(vaddr * 11 + 0x3c); }
+
+    u8* HostPage(u32 page) {
+        if (IsFastmem()) {
+            return arena->Page(page);
+        }
+        return backing.data() + size_t(2 * (first_page + page_count - 1 - page)) * 4096;
+    }
+
+    void Sync(u32 page) {
+        const bool is_mapped = mapped.count(page) != 0;
+        (*page_table)[page] = is_mapped && HasPageTable() ? HostPage(page) : nullptr;
+        if (IsFastmem()) {
+            arena->Protect(page, is_mapped);
+        }
+    }
+
+    VfpMemMode mode;
+    std::unique_ptr<std::array<u8*, A32::UserConfig::NUM_PAGE_TABLE_ENTRIES>> page_table;
+    std::optional<FastmemArena> arena;
+    std::vector<u8> backing;
+    std::set<u32> mapped;
+    std::map<u32, u8> device;
+};
+
+}  // namespace
+
+TEST_CASE("arm: FPSCR cumulative flags across a fastmem fault", "[arm][A32][fpmem]") {
+    const u32 memop = GENERATE(as<u32>{}, 0xe5921000, 0xe5821000);  // ldr r1, [r2]; str r1, [r2]
+    const bool is_load = memop == 0xe5921000;
+
+    const JitSignalHandlerScope signal_scope;
+    FastmemArena arena;  // the data page stays PROT_NONE, so the access faults
+    HostFloatTestEnv env;
+    env.read32_value = 0x12345678;
+    A32::UserConfig config = GetUserConfig(&env);
+    config.fastmem_pointer = reinterpret_cast<uintptr_t>(arena.base);
+    config.recompile_on_fastmem_failure = true;
+    A32::Jit jit{config};
+    env.code_mem = FpAroundMemory({memop});
+
+    // The first run faults into the fallback, the second runs the recompiled block.
+    for (int run = 0; run < 2; run++) {
+        INFO("run " << run);
+        SetUpFpAroundMemory(jit);
+        env.data_callbacks = 0;
+        env.modified_memory.clear();
+        env.ticks_left = env.code_mem.size();
+        jit.Run();
+
+        REQUIRE(env.data_callbacks == 1);
+        if (is_load) {
+            REQUIRE(jit.Regs()[1] == 0x12345678);
+        } else {
+            REQUIRE(env.Written32(fp_data_address) == 0x0badf00d);
+        }
+        CheckFpAroundMemoryFlags(jit);
+    }
+}
+
+TEST_CASE("arm: VFP loads and stores", "[arm][A32][fpmem]") {
+    const VfpMemMode mode = GENERATE(VfpMemMode::Callbacks, VfpMemMode::PageTable, VfpMemMode::Fastmem, VfpMemMode::FastmemPageTable);
+    INFO("mode " << static_cast<int>(mode));
+
+    const JitSignalHandlerScope signal_scope;
+    VfpMemoryTestEnv env{mode};
+    A32::Jit jit{env.Config()};
+
+    const auto sentinel = [](size_t i) { return 0xc0de0000 | u32(i); };
+    const auto set_up = [&](u32 r0, u32 r1) {
+        jit.Regs() = {};
+        jit.Regs()[0] = r0;
+        jit.Regs()[1] = r1;
+        for (size_t i = 0; i < jit.ExtRegs().size(); i++) {
+            jit.ExtRegs()[i] = sentinel(i);
+        }
+        jit.SetFpscr(0);
+        jit.SetCpsr(0x000001d0);  // User-mode
+    };
+    const auto run = [&](u32 pc, u64 ticks) {
+        jit.Regs()[15] = pc;
+        env.ticks_left = ticks;
+        jit.Run();
+    };
+    // Every extended register not listed still holds its sentinel.
+    const auto check_ext = [&](const std::map<size_t, u32>& loaded) {
+        for (size_t i = 0; i < jit.ExtRegs().size(); i++) {
+            INFO("s" << i);
+            const auto iter = loaded.find(i);
+            REQUIRE(jit.ExtRegs()[i] == (iter != loaded.end() ? iter->second : sentinel(i)));
+        }
+    };
+    // With every page mapped, only the callbacks mode may call back for data.
+    bool all_mapped = true;
+    const auto split_pages = [&] {
+        SECTION("second page mapped") {}
+        SECTION("second page unmapped") {
+            env.Unmap(0x11);
+            env.Unmap(0x13);
+            all_mapped = false;
+        }
+    };
+
+    std::function<void()> body;
+
+    SECTION("S") {
+        env.code_mem = {0xedd02a00, 0xed813a00, 0xeafffffe};  // vldr s5, [r0]; vstr s6, [r1]; b .
+        body = [&] {
+            const u32 r0 = 0x10010, r1 = 0x11020;
+            const u32 s5 = env.Peek32(r0);
+            set_up(r0, r1);
+            run(0, 3);
+            check_ext({{5, s5}});
+            REQUIRE(env.Peek32(r1) == sentinel(6));
+        };
+    }
+
+    const auto vldr_vstr_d = [&](u32 r0, u32 r1) {
+        env.code_mem = {0xed903b00, 0xed814b00, 0xeafffffe};  // vldr d3, [r0]; vstr d4, [r1]; b .
+        body = [&, r0, r1] {
+            const u32 lo = env.Peek32(r0), hi = env.Peek32(r0 + 4);
+            set_up(r0, r1);
+            run(0, 3);
+            check_ext({{6, lo}, {7, hi}});
+            REQUIRE(env.Peek32(r1) == sentinel(8));
+            REQUIRE(env.Peek32(r1 + 4) == sentinel(9));
+        };
+    };
+    SECTION("D aligned") {
+        vldr_vstr_d(0x10008, 0x11010);
+    }
+    SECTION("D at 4 mod 8") {
+        vldr_vstr_d(0x10014, 0x1102c);
+    }
+    SECTION("D across a page boundary") {
+        split_pages();
+        vldr_vstr_d(0x10ffc, 0x12ffc);
+    }
+
+    SECTION("VLDM/VSTM") {
+        split_pages();
+        // vstmia r1, {d8-d10}; vldmia r0, {d8-d10}; b .
+        env.code_mem = {0xec818b06, 0xec908b06, 0xeafffffe};
+        body = [&] {
+            const u32 r0 = 0x10ff4, r1 = 0x12ff4;  // d9 straddles the page boundary on both sides
+            std::map<size_t, u32> loaded;
+            for (u32 i = 0; i < 6; i++) {
+                loaded[16 + i] = env.Peek32(r0 + 4 * i);
+            }
+            set_up(r0, r1);
+            run(0, 3);
+            check_ext(loaded);
+            for (u32 i = 0; i < 6; i++) {
+                REQUIRE(env.Peek32(r1 + 4 * i) == sentinel(16 + i));
+            }
+        };
+    }
+
+    SECTION("VPUSH/VPOP") {
+        split_pages();
+        env.code_mem = {
+            0xed2d8b04,  // vpush {d8-d9}
+            0xed2d8a04,  // vpush {s16-s19}
+            0xeafffffe,  // b .
+            0xecbd8a04,  // vpop {s16-s19}
+            0xecbd8b04,  // vpop {d8-d9}
+            0xeafffffe,  // b .
+        };
+        body = [&] {
+            const u32 sp = 0x11008;  // d9 is pushed to 0x11000, the second page
+            set_up(0, 0);
+            jit.Regs()[13] = sp;
+            run(0, 3);
+            REQUIRE(jit.Regs()[13] == sp - 32);
+            for (u32 i = 0; i < 4; i++) {
+                REQUIRE(env.Peek32(sp - 16 + 4 * i) == sentinel(16 + i));
+                REQUIRE(env.Peek32(sp - 32 + 4 * i) == sentinel(16 + i));
+            }
+            check_ext({});
+
+            for (size_t i = 16; i < 20; i++) {
+                jit.ExtRegs()[i] = 0;
+            }
+            run(12, 3);
+            REQUIRE(jit.Regs()[13] == sp);
+            check_ext({});
+        };
+    }
+
+    SECTION("big-endian") {
+        env.code_mem = {
+            0xf1010200,  // setend be
+            0xed903b00,  // vldr d3, [r0]
+            0xedd02a02,  // vldr s5, [r0, #8]
+            0xed814b00,  // vstr d4, [r1]
+            0xedc15a02,  // vstr s11, [r1, #8]
+            0xeafffffe,  // b .
+        };
+        body = [&] {
+            const u32 r0 = 0x10020, r1 = 0x11040;
+            const u32 w0 = env.Peek32(r0), w1 = env.Peek32(r0 + 4), w2 = env.Peek32(r0 + 8);
+            set_up(r0, r1);
+            run(0, 6);
+            // Each word is byte-swapped, and a D register holds the doubleword at r0 as big-endian.
+            check_ext({{5, mcl::bit::swap_bytes_32(w2)}, {6, mcl::bit::swap_bytes_32(w1)}, {7, mcl::bit::swap_bytes_32(w0)}});
+            REQUIRE(env.Peek32(r1) == mcl::bit::swap_bytes_32(sentinel(9)));
+            REQUIRE(env.Peek32(r1 + 4) == mcl::bit::swap_bytes_32(sentinel(8)));
+            REQUIRE(env.Peek32(r1 + 8) == mcl::bit::swap_bytes_32(sentinel(11)));
+        };
+    }
+
+    const auto run_body = [&] {
+        body();
+        if (all_mapped) {
+            REQUIRE((env.data_callbacks == 0) == (mode != VfpMemMode::Callbacks));
+        }
+    };
+
+    REQUIRE(body);
+    run_body();
+    if (env.IsFastmem()) {
+        // Again, through the blocks recompiled after any fastmem fault.
+        env.Reset();
+        run_body();
+    }
+}
+
+#endif
