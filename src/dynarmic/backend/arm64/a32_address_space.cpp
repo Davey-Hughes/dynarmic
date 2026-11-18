@@ -167,7 +167,7 @@ IR::Block A32AddressSpace::GenerateIR(IR::LocationDescriptor descriptor) const {
     Optimization::PolyfillPass(ir_block, {});
     Optimization::NamingPass(ir_block);
     if (conf.HasOptimization(OptimizationFlag::GetSetElimination)) {
-        Optimization::A32GetSetElimination(ir_block, {.convert_nzc_to_nz = true});
+        Optimization::A32GetSetElimination(ir_block, {.convert_nzc_to_nz = true, .forward_fpscr_nzcv = true});
         Optimization::DeadCodeElimination(ir_block);
     }
     if (conf.HasOptimization(OptimizationFlag::ConstProp)) {

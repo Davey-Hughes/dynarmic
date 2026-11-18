@@ -854,6 +854,27 @@ TEST_CASE("arm: FPSCR cumulative flags across page-table memory accesses", "[arm
     CheckFpAroundMemoryFlags(jit);
 }
 
+TEST_CASE("arm: VMRS APSR_nzcv after VMSR FPSCR", "[arm][A32][fpmem]") {
+    ArmTestEnv env;
+    A32::Jit jit{GetUserConfig(&env)};
+    env.code_mem = {
+        0xeeb40a60,  // vcmp.f32 s0, s1
+        0xeee12a10,  // vmsr fpscr, r2
+        0xeef1fa10,  // vmrs APSR_nzcv, fpscr
+        0xeafffffe,  // b .
+    };
+    jit.ExtRegs()[0] = 0x3f800000;  // 1.0f < 2.0f: NZCV 1000
+    jit.ExtRegs()[1] = 0x40000000;
+    jit.Regs()[2] = 0x60000000;  // NZCV 0110
+    jit.SetFpscr(0);
+    jit.SetCpsr(0x000001d0);  // User-mode
+    env.ticks_left = env.code_mem.size();
+    jit.Run();
+
+    REQUIRE(jit.Cpsr() >> 28 == 0b0110);
+    REQUIRE(jit.Fpscr() >> 28 == 0b0110);
+}
+
 TEST_CASE("arm: VCMP and VMRS APSR_nzcv with every condition", "[arm][A32][fpmem]") {
     struct Compare {
         const char* name;

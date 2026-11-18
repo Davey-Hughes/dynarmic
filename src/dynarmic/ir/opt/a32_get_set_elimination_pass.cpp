@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <utility>
+#include <vector>
 
 #include <mcl/assert.hpp>
 #include <mcl/stdint.hpp>
@@ -367,9 +369,57 @@ void RegisterPass(IR::Block& block) {
     }
 }
 
+// A32GetFpscrNZCV reads the value of the block's last A32SetFpscrNZCV, unless FPSCR was written whole in
+// between. VMRS APSR_nzcv's A32SetCpsrNZCVRaw of that read becomes A32SetCpsrNZCV of the value itself, which
+// FlagsPass can forward further. The FPSCR store stays, and dead code elimination drops the unread get.
+void FpscrNZCVPass(IR::Block& block) {
+    A32::IREmitter ir{block, A32::LocationDescriptor{block.Location()}, {}};
+
+    IR::Value nzcv;  // empty: not known
+    std::vector<std::pair<const IR::Inst*, IR::Value>> reads;
+
+    for (auto inst = block.begin(); inst != block.end(); ++inst) {
+        switch (inst->GetOpcode()) {
+        case IR::Opcode::A32SetFpscrNZCV:
+            nzcv = inst->GetArg(0);
+            break;
+        case IR::Opcode::A32SetFpscr:
+            nzcv = {};
+            break;
+        case IR::Opcode::A32GetFpscrNZCV:
+            if (!nzcv.IsEmpty()) {
+                reads.emplace_back(&*inst, nzcv);
+            }
+            break;
+        case IR::Opcode::A32SetCpsrNZCVRaw: {
+            const IR::Value arg = inst->GetArg(0);
+            if (arg.IsImmediate()) {
+                break;
+            }
+            const auto read = std::find_if(reads.begin(), reads.end(), [&](const auto& r) { return r.first == arg.GetInst(); });
+            if (read == reads.end()) {
+                break;
+            }
+            ir.SetInsertionPointBefore(inst);
+            ir.SetCpsrNZCV(IR::NZCV{read->second});
+            inst->Invalidate();
+            break;
+        }
+        default:
+            if (inst->IsCoprocessorInstruction() || inst->CausesCPUException()) {
+                nzcv = {};
+            }
+            break;
+        }
+    }
+}
+
 }  // namespace
 
-void A32GetSetElimination(IR::Block& block, A32GetSetEliminationOptions) {
+void A32GetSetElimination(IR::Block& block, A32GetSetEliminationOptions opt) {
+    if (opt.forward_fpscr_nzcv) {
+        FpscrNZCVPass(block);
+    }
     FlagsPass(block);
     RegisterPass(block);
 }

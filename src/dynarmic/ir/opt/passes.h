@@ -30,6 +30,9 @@ struct PolyfillOptions {
 struct A32GetSetEliminationOptions {
     bool convert_nzc_to_nz = false;
     bool convert_nz_to_nzc = false;
+    // Forward the FPSCR NZCV value VMRS APSR_nzcv reads within a block. Only for a backend whose NZCV values
+    // hold the flags in the guest's layout (arm64).
+    bool forward_fpscr_nzcv = false;
 };
 
 void PolyfillPass(IR::Block& block, const PolyfillOptions& opt);
