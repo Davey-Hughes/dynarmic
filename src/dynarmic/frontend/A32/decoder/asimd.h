@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <optional>
 #include <set>
@@ -14,6 +15,7 @@
 #include <mcl/bit/bit_count.hpp>
 #include <mcl/stdint.hpp>
 
+#include "dynarmic/frontend/A32/decoder/arm.h"
 #include "dynarmic/frontend/decoder/decoder_detail.h"
 #include "dynarmic/frontend/decoder/matcher.h"
 
@@ -65,14 +67,40 @@ std::vector<ASIMDMatcher<V>> GetASIMDDecodeTable() {
     return table;
 }
 
+template<typename Visitor>
+struct ASIMDDecodeBuckets {
+    using Bucket = std::vector<const ASIMDMatcher<Visitor>*>;
+
+    std::vector<ASIMDMatcher<Visitor>> matchers;
+    std::array<Bucket, 0x1000> buckets;
+};
+
+template<typename V>
+ASIMDDecodeBuckets<V> GetASIMDDecodeBuckets() {
+    ASIMDDecodeBuckets<V> table;
+    table.matchers = GetASIMDDecodeTable<V>();
+
+    // Matchers stay in table order within each bucket.
+    for (size_t i = 0; i < table.buckets.size(); ++i) {
+        for (const auto& matcher : table.matchers) {
+            const auto expect = detail::ToFastLookupIndexArm(matcher.GetExpected());
+            const auto mask = detail::ToFastLookupIndexArm(matcher.GetMask());
+            if ((i & mask) == expect) {
+                table.buckets[i].push_back(&matcher);
+            }
+        }
+    }
+    return table;
+}
+
 template<typename V>
 std::optional<std::reference_wrapper<const ASIMDMatcher<V>>> DecodeASIMD(u32 instruction) {
-    static const auto table = GetASIMDDecodeTable<V>();
+    static const auto table = GetASIMDDecodeBuckets<V>();
 
-    const auto matches_instruction = [instruction](const auto& matcher) { return matcher.Matches(instruction); };
+    const auto& bucket = table.buckets[detail::ToFastLookupIndexArm(instruction)];
 
-    auto iter = std::find_if(table.begin(), table.end(), matches_instruction);
-    return iter != table.end() ? std::optional<std::reference_wrapper<const ASIMDMatcher<V>>>(*iter) : std::nullopt;
+    const auto iter = std::find_if(bucket.begin(), bucket.end(), [instruction](const auto* matcher) { return matcher->Matches(instruction); });
+    return iter != bucket.end() ? std::optional<std::reference_wrapper<const ASIMDMatcher<V>>>(**iter) : std::nullopt;
 }
 
 }  // namespace Dynarmic::A32
