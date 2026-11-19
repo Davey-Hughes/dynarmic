@@ -60,6 +60,13 @@ if (DYNARMIC_TESTS_USE_UNICORN)
     endif()
 endif()
 
+if ("arm64" IN_LIST ARCHITECTURE)
+    target_link_libraries(dynarmic_tests PRIVATE tsl::robin_map)
+    target_sources(dynarmic_tests PRIVATE
+        A32/test_arm64_fastmem_patch.cpp
+    )
+endif()
+
 if ("riscv" IN_LIST ARCHITECTURE)
     target_link_libraries(dynarmic_tests PRIVATE biscuit::biscuit)
 endif()

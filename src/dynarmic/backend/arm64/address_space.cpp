@@ -336,15 +336,15 @@ FakeCall AddressSpace::FastmemCallback(u64 host_pc) {
             goto fail;
         }
 
-        const auto patch_entry = block_info->second.fastmem_patch_info.find(host_ptr - entry_point);
-        if (patch_entry == block_info->second.fastmem_patch_info.end()) {
+        const FastmemPatchInfo* const patch_entry = block_info->second.fastmem_patch_info.Find(host_ptr - entry_point);
+        if (!patch_entry) {
             goto fail;
         }
 
-        const auto fc = patch_entry->second.fc;
+        const auto fc = patch_entry->fc;
 
-        if (patch_entry->second.recompile) {
-            const auto marker = patch_entry->second.marker;
+        if (patch_entry->recompile) {
+            const auto marker = patch_entry->marker;
             fastmem_manager.MarkDoNotFastmem(marker);
             InvalidateBasicBlocks({std::get<0>(marker)});
         }

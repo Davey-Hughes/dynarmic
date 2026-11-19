@@ -105,7 +105,7 @@ struct EmittedBlockInfo {
     size_t size;
     std::vector<Relocation> relocations;
     std::vector<BlockRelocation> block_relocations;
-    tsl::robin_map<std::ptrdiff_t, FastmemPatchInfo> fastmem_patch_info;
+    FastmemPatchTable fastmem_patch_info;
 };
 
 struct EmitConfig {

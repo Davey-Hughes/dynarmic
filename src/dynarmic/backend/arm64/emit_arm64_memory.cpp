@@ -560,7 +560,7 @@ void FastmemEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
     const auto fastmem_location = EmitMemoryLdr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered, ShouldExt32(ctx));
 
     ctx.deferred_emits.emplace_back([&code, &ctx, inst, marker, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fpsr_loaded, fallback, end, fastmem_location] {
-        ctx.ebi.fastmem_patch_info.emplace(
+        ctx.fastmem_patches.Add(
             fastmem_location - ctx.ebi.entry_point,
             FastmemPatchInfo{
                 .marker = marker,
@@ -616,7 +616,7 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
     const auto fastmem_location = EmitMemoryStr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered, ShouldExt32(ctx));
 
     ctx.deferred_emits.emplace_back([&code, &ctx, inst, marker, Xaddr = *Xaddr, Rvalue = *Rvalue, ordered, fpsr_loaded, fallback, end, fastmem_location] {
-        ctx.ebi.fastmem_patch_info.emplace(
+        ctx.fastmem_patches.Add(
             fastmem_location - ctx.ebi.entry_point,
             FastmemPatchInfo{
                 .marker = marker,
@@ -692,7 +692,7 @@ CodePtr EmitPairAccess(oaknut::CodeGenerator& code, EmitContext& ctx, bool is_re
 }
 
 void AddFastmemPatch(oaknut::CodeGenerator& code, EmitContext& ctx, CodePtr location, DoNotFastmemMarker marker) {
-    ctx.ebi.fastmem_patch_info.emplace(
+    ctx.fastmem_patches.Add(
         location - ctx.ebi.entry_point,
         FastmemPatchInfo{
             .marker = marker,

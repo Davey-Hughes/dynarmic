@@ -5,9 +5,13 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <tuple>
+#include <utility>
+#include <vector>
 
+#include <mcl/assert.hpp>
 #include <mcl/hash/xmrx.hpp>
 #include <mcl/stdint.hpp>
 #include <tsl/robin_set.h>
@@ -29,6 +33,36 @@ struct FastmemPatchInfo {
     DoNotFastmemMarker marker;
     FakeCall fc;
     bool recompile;
+};
+
+// A block's fastmem accesses by code offset. It is only searched when an access faults, so it is a sorted
+// vector: Add() appends, which the emitters do in increasing offset order (their deferred emits run in the
+// order the accesses were emitted).
+class FastmemPatchTable {
+public:
+    void Add(std::ptrdiff_t offset, FastmemPatchInfo info) {
+        DEBUG_ASSERT(entries.empty() || entries.back().first < offset);
+        entries.emplace_back(offset, info);
+    }
+
+    const FastmemPatchInfo* Find(std::ptrdiff_t offset) const {
+        const auto it = std::lower_bound(entries.begin(), entries.end(), offset, [](const auto& entry, std::ptrdiff_t value) {
+            return entry.first < value;
+        });
+        return it != entries.end() && it->first == offset ? &it->second : nullptr;
+    }
+
+    void Clear() {
+        entries.clear();
+    }
+
+    // Copies another table's entries, allocating exactly their count.
+    void Assign(const FastmemPatchTable& other) {
+        entries.assign(other.entries.begin(), other.entries.end());
+    }
+
+private:
+    std::vector<std::pair<std::ptrdiff_t, FastmemPatchInfo>> entries;
 };
 
 class FastmemManager {

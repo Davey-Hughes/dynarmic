@@ -203,10 +203,11 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     buffers.labels.clear();
     buffers.relocations.clear();
     buffers.block_relocations.clear();
+    buffers.fastmem_patches.Clear();
 
     FpsrManager fpsr_manager{code, conf.state_fpsr_offset};
     RegAlloc reg_alloc{code, fpsr_manager, {GPR_ORDER.begin(), GPR_ORDER.end()}, {FPR_ORDER.begin(), FPR_ORDER.end()}, buffers.reg_alloc};
-    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits, buffers.vfp_memory, buffers.labels, buffers.relocations, buffers.block_relocations};
+    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits, buffers.vfp_memory, buffers.labels, buffers.relocations, buffers.block_relocations, buffers.fastmem_patches};
     AssignVfpMemoryRoles(ctx);
 
     ebi.entry_point = code.xptr<CodePtr>();
@@ -276,6 +277,7 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     ebi.size = code.xptr<CodePtr>() - ebi.entry_point;
     ebi.relocations.assign(ctx.relocations.begin(), ctx.relocations.end());
     ebi.block_relocations.assign(ctx.block_relocations.begin(), ctx.block_relocations.end());
+    ebi.fastmem_patch_info.Assign(ctx.fastmem_patches);
     return ebi;
 }
 
