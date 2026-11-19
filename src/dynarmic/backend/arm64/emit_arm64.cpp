@@ -265,7 +265,7 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     conf.emit_terminal(code, ctx);
     code.BRK(0);
 
-    for (const auto& deferred_emit : ctx.deferred_emits) {
+    for (auto& deferred_emit : ctx.deferred_emits) {
         deferred_emit();
     }
     ctx.deferred_emits.clear();

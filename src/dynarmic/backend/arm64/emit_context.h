@@ -5,8 +5,11 @@
 
 #pragma once
 
+#include <cstddef>
 #include <deque>
-#include <functional>
+#include <new>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <oaknut/oaknut.hpp>
@@ -29,6 +32,47 @@ class FpsrManager;
 // A label that inline code and its deferred emit share. GenSharedLabel() makes it in EmitBuffers::labels,
 // where it lives until EmitArm64() starts the next block.
 using SharedLabel = oaknut::Label*;
+
+// A deferred emit's closure, held inline so that queuing one doesn't allocate (a std::function would, for
+// closures this size). EmitBuffers keeps the list, so its storage is reused between blocks.
+class DeferredEmit {
+public:
+    template<typename F>
+    requires(!std::is_same_v<std::decay_t<F>, DeferredEmit>)
+    DeferredEmit(F&& f) {
+        using T = std::decay_t<F>;
+        static_assert(sizeof(T) <= sizeof(storage) && alignof(T) <= alignof(std::max_align_t), "Closure too large for DeferredEmit");
+        new (storage) T(std::forward<F>(f));
+        ops = &ops_for<T>;
+    }
+    DeferredEmit(DeferredEmit&& other) noexcept
+            : ops{other.ops} {
+        ops->move(storage, other.storage);
+    }
+    DeferredEmit(const DeferredEmit&) = delete;
+    DeferredEmit& operator=(const DeferredEmit&) = delete;
+    DeferredEmit& operator=(DeferredEmit&&) = delete;
+    ~DeferredEmit() { ops->destroy(storage); }
+
+    void operator()() { ops->call(storage); }
+
+private:
+    struct Ops {
+        void (*call)(void* closure);
+        void (*move)(void* to, void* from);
+        void (*destroy)(void* closure);
+    };
+
+    template<typename T>
+    static constexpr Ops ops_for{
+        [](void* closure) { (*std::launder(static_cast<T*>(closure)))(); },
+        [](void* to, void* from) { new (to) T(std::move(*std::launder(static_cast<T*>(from)))); },
+        [](void* closure) { std::launder(static_cast<T*>(closure))->~T(); },
+    };
+
+    const Ops* ops;
+    alignas(std::max_align_t) std::byte storage[96];  // the largest closure today is 80 bytes
+};
 
 // How an instruction takes part in a VFP register transfer to or from memory, when its emitter departs from
 // the usual code (AssignVfpMemoryRoles() in emit_arm64_memory.cpp). A pair is two 32-bit accesses to
@@ -55,7 +99,7 @@ struct VfpMemoryInfo {
 // storage is reused instead of allocated again for every block.
 struct EmitBuffers {
     RegAllocBuffers reg_alloc;
-    std::vector<std::function<void()>> deferred_emits;
+    std::vector<DeferredEmit> deferred_emits;
     std::vector<VfpMemoryInfo> vfp_memory;  // by IR::Inst::GetName()
     std::deque<oaknut::Label> labels;       // a deque: SharedLabels point into it
 };
@@ -68,7 +112,7 @@ struct EmitContext {
     FpsrManager& fpsr;
     FastmemManager& fastmem;
 
-    std::vector<std::function<void()>>& deferred_emits;
+    std::vector<DeferredEmit>& deferred_emits;
     std::vector<VfpMemoryInfo>& vfp_memory;
     std::deque<oaknut::Label>& labels;
 
