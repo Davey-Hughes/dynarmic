@@ -422,7 +422,7 @@ void InlinePageTableEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
-    SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+    SharedLabel fallback = GenSharedLabel(ctx), end = GenSharedLabel(ctx);
 
     const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     EmitMemoryLdr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered);
@@ -468,7 +468,7 @@ void InlinePageTableEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ct
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
-    SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+    SharedLabel fallback = GenSharedLabel(ctx), end = GenSharedLabel(ctx);
 
     const auto [Xbase, Xoffset] = InlinePageTableEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     EmitMemoryStr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered);
@@ -554,7 +554,7 @@ void FastmemEmitReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
-    SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+    SharedLabel fallback = GenSharedLabel(ctx), end = GenSharedLabel(ctx);
 
     const auto [Xbase, Xoffset] = FastmemEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     const auto fastmem_location = EmitMemoryLdr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered, ShouldExt32(ctx));
@@ -610,7 +610,7 @@ void FastmemEmitWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::I
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Rvalue);
 
-    SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+    SharedLabel fallback = GenSharedLabel(ctx), end = GenSharedLabel(ctx);
 
     const auto [Xbase, Xoffset] = FastmemEmitVAddrLookup<bitsize>(code, ctx, Xaddr, fallback);
     const auto fastmem_location = EmitMemoryStr<bitsize>(code, Rvalue->index(), Xbase, Xoffset, ordered, ShouldExt32(ctx));
@@ -713,7 +713,7 @@ void EmitPairedReadMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Ins
     ctx.reg_alloc.SpillFlags();
     RegAlloc::Realize(Xaddr, Dvalue);
 
-    SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+    SharedLabel fallback = GenSharedLabel(ctx), end = GenSharedLabel(ctx);
     const auto marker = PairFastmemMarker(ctx, lo);
     const CodePtr location = EmitPairAccess(code, ctx, true, marker.has_value(), *Xaddr, *Dvalue, fallback);
 
@@ -759,7 +759,7 @@ void EmitPairedWriteMemory(oaknut::CodeGenerator& code, EmitContext& ctx, IR::In
         ctx.reg_alloc.SpillFlags();
         RegAlloc::Realize(Xaddr, Rvalue);
 
-        SharedLabel fallback = GenSharedLabel(), end = GenSharedLabel();
+        SharedLabel fallback = GenSharedLabel(ctx), end = GenSharedLabel(ctx);
         const auto marker = PairFastmemMarker(ctx, lo);
         const CodePtr location = EmitPairAccess(code, ctx, false, marker.has_value(), *Xaddr, *Rvalue, fallback);
 

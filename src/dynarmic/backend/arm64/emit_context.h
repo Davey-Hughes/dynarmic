@@ -5,8 +5,8 @@
 
 #pragma once
 
+#include <deque>
 #include <functional>
-#include <memory>
 #include <vector>
 
 #include <oaknut/oaknut.hpp>
@@ -26,11 +26,9 @@ struct EmitConfig;
 class FastmemManager;
 class FpsrManager;
 
-using SharedLabel = std::shared_ptr<oaknut::Label>;
-
-inline SharedLabel GenSharedLabel() {
-    return std::make_shared<oaknut::Label>();
-}
+// A label that inline code and its deferred emit share. GenSharedLabel() makes it in EmitBuffers::labels,
+// where it lives until EmitArm64() starts the next block.
+using SharedLabel = oaknut::Label*;
 
 // How an instruction takes part in a VFP register transfer to or from memory, when its emitter departs from
 // the usual code (AssignVfpMemoryRoles() in emit_arm64_memory.cpp). A pair is two 32-bit accesses to
@@ -59,6 +57,7 @@ struct EmitBuffers {
     RegAllocBuffers reg_alloc;
     std::vector<std::function<void()>> deferred_emits;
     std::vector<VfpMemoryInfo> vfp_memory;  // by IR::Inst::GetName()
+    std::deque<oaknut::Label> labels;       // a deque: SharedLabels point into it
 };
 
 struct EmitContext {
@@ -71,6 +70,7 @@ struct EmitContext {
 
     std::vector<std::function<void()>>& deferred_emits;
     std::vector<VfpMemoryInfo>& vfp_memory;
+    std::deque<oaknut::Label>& labels;
 
     VfpMemoryInfo VfpMemory(const IR::Inst* inst) const {
         const size_t name = inst->GetName();
@@ -82,5 +82,9 @@ struct EmitContext {
         return fpcr_controlled ? fpcr : fpcr.ASIMDStandardValue();
     }
 };
+
+inline SharedLabel GenSharedLabel(EmitContext& ctx) {
+    return &ctx.labels.emplace_back();
+}
 
 }  // namespace Dynarmic::Backend::Arm64
