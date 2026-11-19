@@ -26,6 +26,12 @@ template<typename Visitor>
 struct VFPDecodeTable {
     using Bucket = std::vector<const VFPMatcher<Visitor>*>;
 
+    VFPDecodeTable() = default;
+    // The buckets point into matchers, so a copy's would point into the original. A move keeps matchers' storage.
+    VFPDecodeTable(const VFPDecodeTable&) = delete;
+    VFPDecodeTable& operator=(const VFPDecodeTable&) = delete;
+    VFPDecodeTable(VFPDecodeTable&&) = default;
+
     std::vector<VFPMatcher<Visitor>> matchers;
     std::array<Bucket, 0x1000> unconditional;
     std::array<Bucket, 0x1000> conditional;

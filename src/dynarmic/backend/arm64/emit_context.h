@@ -71,7 +71,9 @@ private:
     };
 
     const Ops* ops;
-    alignas(std::max_align_t) std::byte storage[96];  // the largest closure today is 80 bytes
+    // Fits the largest closure, 80 bytes (the VFP pair fallbacks in emit_arm64_memory.cpp). The constructor
+    // fails to compile for a larger one.
+    alignas(std::max_align_t) std::byte storage[96];
 };
 
 // How an instruction takes part in a VFP register transfer to or from memory, when its emitter departs from

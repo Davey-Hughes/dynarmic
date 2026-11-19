@@ -11,7 +11,6 @@
 #include <vector>
 
 #include <mcl/stdint.hpp>
-#include <tsl/robin_map.h>
 
 #include "dynarmic/backend/arm64/fastmem.h"
 #include "dynarmic/interface/A32/coprocessor.h"

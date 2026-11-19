@@ -41,7 +41,7 @@ struct FastmemPatchInfo {
 class FastmemPatchTable {
 public:
     void Add(std::ptrdiff_t offset, FastmemPatchInfo info) {
-        DEBUG_ASSERT(entries.empty() || entries.back().first < offset);
+        ASSERT(entries.empty() || entries.back().first < offset);
         entries.emplace_back(offset, info);
     }
 

@@ -199,7 +199,9 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
 
     EmittedBlockInfo ebi;
 
-    // Start the reused lists empty. The previous block's deferred emits have run, so nothing points into its labels.
+    // Start the reused lists empty. deferred_emits is already empty unless an exception abandoned the previous
+    // block; its closures point into labels, so it is cleared first.
+    buffers.deferred_emits.clear();
     buffers.labels.clear();
     buffers.relocations.clear();
     buffers.block_relocations.clear();
@@ -275,6 +277,8 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     code.BRK(0);
 
     ebi.size = code.xptr<CodePtr>() - ebi.entry_point;
+    // Emitters add to ctx.relocations. One added to ebi.relocations directly would be overwritten here.
+    ASSERT(ebi.relocations.empty());
     ebi.relocations.assign(ctx.relocations.begin(), ctx.relocations.end());
     ebi.block_relocations.assign(ctx.block_relocations.begin(), ctx.block_relocations.end());
     ebi.fastmem_patch_info.Assign(ctx.fastmem_patches);

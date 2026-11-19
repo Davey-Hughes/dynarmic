@@ -71,6 +71,12 @@ template<typename Visitor>
 struct ASIMDDecodeBuckets {
     using Bucket = std::vector<const ASIMDMatcher<Visitor>*>;
 
+    ASIMDDecodeBuckets() = default;
+    // The buckets point into matchers, so a copy's would point into the original. A move keeps matchers' storage.
+    ASIMDDecodeBuckets(const ASIMDDecodeBuckets&) = delete;
+    ASIMDDecodeBuckets& operator=(const ASIMDDecodeBuckets&) = delete;
+    ASIMDDecodeBuckets(ASIMDDecodeBuckets&&) = default;
+
     std::vector<ASIMDMatcher<Visitor>> matchers;
     std::array<Bucket, 0x1000> buckets;
 };
