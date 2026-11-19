@@ -102,6 +102,9 @@ struct EmitBuffers {
     std::vector<DeferredEmit> deferred_emits;
     std::vector<VfpMemoryInfo> vfp_memory;  // by IR::Inst::GetName()
     std::deque<oaknut::Label> labels;       // a deque: SharedLabels point into it
+    // EmitArm64 copies these into the EmittedBlockInfo at the end, which allocates them once at their size.
+    std::vector<Relocation> relocations;
+    std::vector<BlockRelocation> block_relocations;
 };
 
 struct EmitContext {
@@ -115,6 +118,8 @@ struct EmitContext {
     std::vector<DeferredEmit>& deferred_emits;
     std::vector<VfpMemoryInfo>& vfp_memory;
     std::deque<oaknut::Label>& labels;
+    std::vector<Relocation>& relocations;             // become ebi.relocations
+    std::vector<BlockRelocation>& block_relocations;  // become ebi.block_relocations
 
     VfpMemoryInfo VfpMemory(const IR::Inst* inst) const {
         const size_t name = inst->GetName();

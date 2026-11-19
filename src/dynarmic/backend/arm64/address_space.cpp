@@ -268,38 +268,36 @@ void AddressSpace::Link(const EmittedBlockInfo& block_info) {
         }
     }
 
-    for (const auto& [target_descriptor, list] : block_info.block_relocations) {
-        block_references[target_descriptor].insert(block_info.entry_point);
-        LinkBlockLinks(block_info.entry_point, Get(target_descriptor), list);
+    for (const auto& block_relocation : block_info.block_relocations) {
+        block_references[block_relocation.target].insert(block_info.entry_point);
+        LinkBlockLink(block_info.entry_point, Get(block_relocation.target), block_relocation);
     }
 }
 
-void AddressSpace::LinkBlockLinks(const CodePtr entry_point, const CodePtr target_ptr, const std::vector<BlockRelocation>& block_relocations_list) {
+void AddressSpace::LinkBlockLink(const CodePtr entry_point, const CodePtr target_ptr, const BlockRelocation& block_relocation) {
     using namespace oaknut;
     using namespace oaknut::util;
 
-    for (auto [ptr_offset, type] : block_relocations_list) {
-        CodeGenerator c{mem.ptr(), mem.ptr()};
-        c.set_xptr(reinterpret_cast<u32*>(entry_point + ptr_offset));
+    CodeGenerator c{mem.ptr(), mem.ptr()};
+    c.set_xptr(reinterpret_cast<u32*>(entry_point + block_relocation.code_offset));
 
-        switch (type) {
-        case BlockRelocationType::Branch:
-            if (target_ptr) {
-                c.B((void*)target_ptr);
-            } else {
-                c.NOP();
-            }
-            break;
-        case BlockRelocationType::MoveToScratch1:
-            if (target_ptr) {
-                c.ADRL(Xscratch1, (void*)target_ptr);
-            } else {
-                c.ADRL(Xscratch1, prelude_info.return_to_dispatcher);
-            }
-            break;
-        default:
-            ASSERT_FALSE("Invalid BlockRelocationType");
+    switch (block_relocation.type) {
+    case BlockRelocationType::Branch:
+        if (target_ptr) {
+            c.B((void*)target_ptr);
+        } else {
+            c.NOP();
         }
+        break;
+    case BlockRelocationType::MoveToScratch1:
+        if (target_ptr) {
+            c.ADRL(Xscratch1, (void*)target_ptr);
+        } else {
+            c.ADRL(Xscratch1, prelude_info.return_to_dispatcher);
+        }
+        break;
+    default:
+        ASSERT_FALSE("Invalid BlockRelocationType");
     }
 }
 
@@ -313,8 +311,10 @@ void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor,
         if (auto block_iter = block_infos.find(code_ptr); block_iter != block_infos.end()) {
             const EmittedBlockInfo& block_info = block_iter->second;
 
-            if (auto relocation_iter = block_info.block_relocations.find(target_descriptor); relocation_iter != block_info.block_relocations.end()) {
-                LinkBlockLinks(block_info.entry_point, target_ptr, relocation_iter->second);
+            for (const auto& block_relocation : block_info.block_relocations) {
+                if (block_relocation.target == target_descriptor) {
+                    LinkBlockLink(block_info.entry_point, target_ptr, block_relocation);
+                }
             }
 
             mem.invalidate(reinterpret_cast<u32*>(block_info.entry_point), block_info.size);

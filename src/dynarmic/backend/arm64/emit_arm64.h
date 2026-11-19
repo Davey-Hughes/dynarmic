@@ -95,6 +95,7 @@ enum class BlockRelocationType {
 };
 
 struct BlockRelocation {
+    IR::LocationDescriptor target;
     std::ptrdiff_t code_offset;
     BlockRelocationType type;
 };
@@ -103,7 +104,7 @@ struct EmittedBlockInfo {
     CodePtr entry_point;
     size_t size;
     std::vector<Relocation> relocations;
-    tsl::robin_map<IR::LocationDescriptor, std::vector<BlockRelocation>> block_relocations;
+    std::vector<BlockRelocation> block_relocations;
     tsl::robin_map<std::ptrdiff_t, FastmemPatchInfo> fastmem_patch_info;
 };
 

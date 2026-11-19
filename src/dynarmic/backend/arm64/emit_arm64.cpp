@@ -199,12 +199,14 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
 
     EmittedBlockInfo ebi;
 
-    // The previous block's deferred emits have run, so nothing points into its labels.
+    // Start the reused lists empty. The previous block's deferred emits have run, so nothing points into its labels.
     buffers.labels.clear();
+    buffers.relocations.clear();
+    buffers.block_relocations.clear();
 
     FpsrManager fpsr_manager{code, conf.state_fpsr_offset};
     RegAlloc reg_alloc{code, fpsr_manager, {GPR_ORDER.begin(), GPR_ORDER.end()}, {FPR_ORDER.begin(), FPR_ORDER.end()}, buffers.reg_alloc};
-    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits, buffers.vfp_memory, buffers.labels};
+    EmitContext ctx{block, reg_alloc, conf, ebi, fpsr_manager, fastmem_manager, buffers.deferred_emits, buffers.vfp_memory, buffers.labels, buffers.relocations, buffers.block_relocations};
     AssignVfpMemoryRoles(ctx);
 
     ebi.entry_point = code.xptr<CodePtr>();
@@ -272,16 +274,18 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     code.BRK(0);
 
     ebi.size = code.xptr<CodePtr>() - ebi.entry_point;
+    ebi.relocations.assign(ctx.relocations.begin(), ctx.relocations.end());
+    ebi.block_relocations.assign(ctx.block_relocations.begin(), ctx.block_relocations.end());
     return ebi;
 }
 
 void EmitRelocation(oaknut::CodeGenerator& code, EmitContext& ctx, LinkTarget link_target) {
-    ctx.ebi.relocations.emplace_back(Relocation{code.xptr<CodePtr>() - ctx.ebi.entry_point, link_target});
+    ctx.relocations.emplace_back(Relocation{code.xptr<CodePtr>() - ctx.ebi.entry_point, link_target});
     code.NOP();
 }
 
 void EmitBlockLinkRelocation(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::LocationDescriptor& descriptor, BlockRelocationType type) {
-    ctx.ebi.block_relocations[descriptor].emplace_back(BlockRelocation{code.xptr<CodePtr>() - ctx.ebi.entry_point, type});
+    ctx.block_relocations.emplace_back(BlockRelocation{descriptor, code.xptr<CodePtr>() - ctx.ebi.entry_point, type});
     switch (type) {
     case BlockRelocationType::Branch:
         code.NOP();
