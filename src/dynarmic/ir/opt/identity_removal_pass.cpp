@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: 0BSD
  */
 
-#include <vector>
+#include <boost/container/small_vector.hpp>
 
 #include "dynarmic/ir/basic_block.h"
 #include "dynarmic/ir/opcodes.h"
@@ -12,7 +12,8 @@
 namespace Dynarmic::Optimization {
 
 void IdentityRemovalPass(IR::Block& block) {
-    std::vector<IR::Inst*> to_invalidate;
+    // On the stack for most blocks, rather than grown on the heap for each one.
+    boost::container::small_vector<IR::Inst*, 64> to_invalidate;
 
     auto iter = block.begin();
     while (iter != block.end()) {
