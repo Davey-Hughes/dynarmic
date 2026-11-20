@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <algorithm>
 #include <cstdio>
+#include <iterator>
 
 #include <mcl/bit_cast.hpp>
 
@@ -42,19 +44,23 @@ CodePtr AddressSpace::Get(IR::LocationDescriptor descriptor) {
     return nullptr;
 }
 
+// The entry of the block that starts at or before host_pc, or end() if there is none.
+static auto FindReverseEntry(const std::vector<std::pair<CodePtr, IR::LocationDescriptor>>& entries, CodePtr host_pc) {
+    const auto iter = std::upper_bound(entries.begin(), entries.end(), host_pc,
+                                       [](CodePtr pc, const auto& entry) { return pc < entry.first; });
+    // upper_bound locates the first entry greater than host_pc, so the one before it is the block's
+    return iter == entries.begin() ? entries.end() : std::prev(iter);
+}
+
 std::optional<IR::LocationDescriptor> AddressSpace::ReverseGetLocation(CodePtr host_pc) {
-    if (auto iter = reverse_block_entries.upper_bound(host_pc); iter != reverse_block_entries.begin()) {
-        // upper_bound locates the first value greater than host_pc, so we need to decrement
-        --iter;
+    if (const auto iter = FindReverseEntry(reverse_block_entries, host_pc); iter != reverse_block_entries.end()) {
         return iter->second;
     }
     return std::nullopt;
 }
 
 CodePtr AddressSpace::ReverseGetEntryPoint(CodePtr host_pc) {
-    if (auto iter = reverse_block_entries.upper_bound(host_pc); iter != reverse_block_entries.begin()) {
-        // upper_bound locates the first value greater than host_pc, so we need to decrement
-        --iter;
+    if (const auto iter = FindReverseEntry(reverse_block_entries, host_pc); iter != reverse_block_entries.end()) {
         return iter->first;
     }
     return nullptr;
@@ -117,7 +123,8 @@ CodePtr AddressSpace::Emit(IR::Block block) {
     const CodePtr entry_point = new_block_info.entry_point;
 
     ASSERT(block_entries.insert({block.Location(), entry_point}).second);
-    ASSERT(reverse_block_entries.insert({entry_point, block.Location()}).second);
+    ASSERT(reverse_block_entries.empty() || reverse_block_entries.back().first < entry_point);
+    reverse_block_entries.emplace_back(entry_point, block.Location());
     const auto [block_info_iter, inserted] = block_infos.insert({entry_point, std::move(new_block_info)});
     ASSERT(inserted);
     // Nothing below inserts into block_infos, so this reference stays valid.

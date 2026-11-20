@@ -5,8 +5,9 @@
 
 #pragma once
 
-#include <map>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include <mcl/stdint.hpp>
 #include <oaknut/code_block.hpp>
@@ -77,7 +78,8 @@ protected:
     // A IR::LocationDescriptor will have one current CodePtr.
     // However, there can be multiple other CodePtrs which are older, previously invalidated blocks.
     tsl::robin_map<IR::LocationDescriptor, CodePtr> block_entries;
-    std::map<CodePtr, IR::LocationDescriptor> reverse_block_entries;
+    // Sorted by entry point: Emit() only appends code until ClearCache() resets it.
+    std::vector<std::pair<CodePtr, IR::LocationDescriptor>> reverse_block_entries;
     tsl::robin_map<CodePtr, EmittedBlockInfo> block_infos;
     tsl::robin_map<IR::LocationDescriptor, tsl::robin_set<CodePtr>> block_references;
 
