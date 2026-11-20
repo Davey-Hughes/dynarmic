@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include <boost/container/small_vector.hpp>
 #include <mcl/stdint.hpp>
 #include <oaknut/code_block.hpp>
 #include <oaknut/oaknut.hpp>
@@ -81,7 +82,8 @@ protected:
     // Sorted by entry point: Emit() only appends code until ClearCache() resets it.
     std::vector<std::pair<CodePtr, IR::LocationDescriptor>> reverse_block_entries;
     tsl::robin_map<CodePtr, EmittedBlockInfo> block_infos;
-    tsl::robin_map<IR::LocationDescriptor, tsl::robin_set<CodePtr>> block_references;
+    // The blocks that link to each target, each listed once (Link() adds a block's references together).
+    tsl::robin_map<IR::LocationDescriptor, boost::container::small_vector<CodePtr, 2>> block_references;
 
     ExceptionHandler exception_handler;
     FastmemManager fastmem_manager;

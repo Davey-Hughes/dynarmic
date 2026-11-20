@@ -276,7 +276,11 @@ void AddressSpace::Link(const EmittedBlockInfo& block_info) {
     }
 
     for (const auto& block_relocation : block_info.block_relocations) {
-        block_references[block_relocation.target].insert(block_info.entry_point);
+        // A block can link to the same target more than once; its references are added here, one after another.
+        auto& references = block_references[block_relocation.target];
+        if (references.empty() || references.back() != block_info.entry_point) {
+            references.push_back(block_info.entry_point);
+        }
         LinkBlockLink(block_info.entry_point, Get(block_relocation.target), block_relocation);
     }
 }
