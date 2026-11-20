@@ -5,10 +5,11 @@
 
 #pragma once
 
-#include <set>
+#include <vector>
 
-#include <boost/icl/interval_map.hpp>
+#include <boost/icl/discrete_interval.hpp>
 #include <boost/icl/interval_set.hpp>
+#include <tsl/robin_map.h>
 #include <tsl/robin_set.h>
 
 #include "dynarmic/ir/location_descriptor.h"
@@ -23,7 +24,16 @@ public:
     tsl::robin_set<IR::LocationDescriptor> InvalidateRanges(const boost::icl::interval_set<ProgramCounterType>& ranges);
 
 private:
-    boost::icl::interval_map<ProgramCounterType, std::set<IR::LocationDescriptor>> block_ranges;
+    struct Entry {
+        ProgramCounterType first;
+        ProgramCounterType last;
+        IR::LocationDescriptor location;
+    };
+    static constexpr int page_bits = 12;
+
+    // Each block's range, filed under every guest page it touches. Invalidation leaves entries in place,
+    // and a block added again gets another entry.
+    tsl::robin_map<ProgramCounterType, std::vector<Entry>> pages;
 };
 
 }  // namespace Dynarmic::Backend
