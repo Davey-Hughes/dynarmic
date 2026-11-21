@@ -193,7 +193,7 @@ inline Type Value::GetType() const {
     if (type != Type::Opaque)
         return type;
     if (inner.inst->GetOpcode() != Opcode::Identity)
-        return inner.inst->GetType();
+        return GetTypeOf(inner.inst->GetOpcode());
     return GetTypeThroughIdentity();
 }
 

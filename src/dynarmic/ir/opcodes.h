@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <array>
 #include <string>
 
 #include <fmt/format.h>
@@ -31,11 +32,23 @@ enum class Opcode {
 
 constexpr size_t OpcodeCount = static_cast<size_t>(Opcode::NUM_OPCODE);
 
+namespace OpcodeInfo {
+
+// The return type and the number of arguments of every opcode, as flat tables for the two inline lookups below.
+extern const std::array<Type, OpcodeCount> types;
+extern const std::array<u8, OpcodeCount> arg_counts;
+
+}  // namespace OpcodeInfo
+
 /// Get return type of an opcode
-Type GetTypeOf(Opcode op);
+inline Type GetTypeOf(Opcode op) {
+    return OpcodeInfo::types.at(static_cast<size_t>(op));
+}
 
 /// Get the number of arguments an opcode accepts
-size_t GetNumArgsOf(Opcode op);
+inline size_t GetNumArgsOf(Opcode op) {
+    return OpcodeInfo::arg_counts.at(static_cast<size_t>(op));
+}
 
 /// Get the required type of an argument of an opcode
 Type GetArgTypeOf(Opcode op, size_t arg_index);

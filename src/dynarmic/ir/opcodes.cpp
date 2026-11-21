@@ -6,6 +6,7 @@
 #include "dynarmic/ir/opcodes.h"
 
 #include <array>
+#include <initializer_list>
 #include <vector>
 
 #include "dynarmic/ir/type.h"
@@ -50,15 +51,27 @@ static const std::array opcode_info{
 #undef A64OPC
 };
 
+constexpr std::array<Type, OpcodeCount> types{
+#define OPCODE(name, type, ...) type,
+#define A32OPC(name, type, ...) type,
+#define A64OPC(name, type, ...) type,
+#include "./opcodes.inc"
+#undef OPCODE
+#undef A32OPC
+#undef A64OPC
+};
+
+constexpr std::array<u8, OpcodeCount> arg_counts{
+#define OPCODE(name, type, ...) static_cast<u8>(std::initializer_list<Type>{__VA_ARGS__}.size()),
+#define A32OPC(name, type, ...) static_cast<u8>(std::initializer_list<Type>{__VA_ARGS__}.size()),
+#define A64OPC(name, type, ...) static_cast<u8>(std::initializer_list<Type>{__VA_ARGS__}.size()),
+#include "./opcodes.inc"
+#undef OPCODE
+#undef A32OPC
+#undef A64OPC
+};
+
 }  // namespace OpcodeInfo
-
-Type GetTypeOf(Opcode op) {
-    return OpcodeInfo::opcode_info.at(static_cast<size_t>(op)).type;
-}
-
-size_t GetNumArgsOf(Opcode op) {
-    return OpcodeInfo::opcode_info.at(static_cast<size_t>(op)).arg_types.size();
-}
 
 Type GetArgTypeOf(Opcode op, size_t arg_index) {
     return OpcodeInfo::opcode_info.at(static_cast<size_t>(op)).arg_types.at(arg_index);
