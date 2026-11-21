@@ -632,15 +632,19 @@ size_t Inst::NumArgs() const {
 }
 
 Value Inst::GetArg(size_t index) const {
+#ifndef MCL_IGNORE_ASSERTS
     ASSERT_MSG(index < GetNumArgsOf(op), "Inst::GetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
     ASSERT_MSG(!args[index].IsEmpty() || GetArgTypeOf(op, index) == IR::Type::Opaque, "Inst::GetArg: index {} is empty", index, args[index].GetType());
+#endif
 
     return args[index];
 }
 
 void Inst::SetArg(size_t index, Value value) {
+#ifndef MCL_IGNORE_ASSERTS
     ASSERT_MSG(index < GetNumArgsOf(op), "Inst::SetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
     ASSERT_MSG(AreTypesCompatible(value.GetType(), GetArgTypeOf(op, index)), "Inst::SetArg: type {} of argument {} not compatible with operation {} ({})", value.GetType(), index, op, GetArgTypeOf(op, index));
+#endif
 
     if (!args[index].IsImmediate()) {
         UndoUse(args[index]);

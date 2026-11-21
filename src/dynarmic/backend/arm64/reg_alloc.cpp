@@ -135,7 +135,9 @@ RegAlloc::ArgumentInfo RegAlloc::GetArgumentInfo(IR::Inst* inst) {
         const IR::Value arg = inst->GetArg(i);
         ret[i].value = arg;
         if (!arg.IsImmediate() && !IsValuelessType(arg.GetType())) {
+#ifndef MCL_IGNORE_ASSERTS
             ASSERT_MSG(ValueLocation(arg.GetInst()), "argument must already been defined");
+#endif
             HostLocInfo& info = ValueInfo(arg.GetInst());
             info.uses_this_inst++;
             MarkTouched(info);
