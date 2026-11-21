@@ -131,10 +131,10 @@ RegAlloc::ArgumentInfo RegAlloc::GetArgumentInfo(IR::Inst* inst) {
         const IR::Value arg = inst->GetArg(i);
         ret[i].value = arg;
         if (!arg.IsImmediate() && !IsValuelessType(arg.GetType())) {
-#ifndef MCL_IGNORE_ASSERTS
-            ASSERT_MSG(ValueLocation(arg.GetInst()), "argument must already been defined");
-#endif
-            HostLocInfo& info = ValueInfo(arg.GetInst());
+            const auto location = ValueLocation(arg.GetInst());
+            ASSERT_MSG(location, "argument must already been defined");
+            ret[i].location = *location;
+            HostLocInfo& info = ValueInfo(*location);
             info.uses_this_inst++;
             MarkTouched(info);
         }
@@ -726,7 +726,12 @@ HostLocInfo& RegAlloc::ValueInfo(const IR::Inst* value) {
     return ValueInfo(*location);
 }
 
-HostLoc RegAlloc::LockValue(const IR::Inst* value) {
+HostLoc RegAlloc::LockValue(const IR::Inst* value, HostLoc last_location) {
+    if (HostLocInfo& info = ValueInfo(last_location); info.Contains(value)) {
+        info.locked++;
+        return last_location;
+    }
+
     const auto location = ValueLocation(value);
     ASSERT_MSG(location, "RegAlloc::LockValue: Value not found");
     ValueInfo(*location).locked++;
