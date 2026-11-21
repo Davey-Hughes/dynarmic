@@ -26,7 +26,8 @@ AddressSpace::AddressSpace(size_t code_cache_size)
         : code_cache_size(code_cache_size)
         , mem(code_cache_size)
         , code(mem.ptr(), mem.ptr())
-        , fastmem_manager(exception_handler) {
+        , fastmem_manager(exception_handler)
+        , fast_dispatch_table(std::make_unique<FastDispatchEntry[]>(fast_dispatch_table_size)) {
     ASSERT_MSG(code_cache_size <= 128 * 1024 * 1024, "code_cache_size > 128 MiB not currently supported");
 
     exception_handler.Register(mem, code_cache_size);
@@ -88,6 +89,7 @@ void AddressSpace::InvalidateBasicBlocks(const tsl::robin_set<IR::LocationDescri
         // and the currently executing block may have references to itself which need to be unlinked.
         RelinkForDescriptor(descriptor, nullptr);
 
+        FastDispatchErase(descriptor);
         block_entries.erase(iter);
     }
 
@@ -95,6 +97,7 @@ void AddressSpace::InvalidateBasicBlocks(const tsl::robin_set<IR::LocationDescri
 }
 
 void AddressSpace::ClearCache() {
+    std::fill_n(fast_dispatch_table.get(), fast_dispatch_table_size, FastDispatchEntry{});
     block_entries.clear();
     reverse_block_entries.clear();
     block_infos.clear();

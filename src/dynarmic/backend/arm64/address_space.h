@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -72,6 +73,28 @@ protected:
 
     FakeCall FastmemCallback(u64 host_pc);
 
+    // Fast dispatch (OptimizationFlag::FastDispatch): a direct-mapped cache of descriptor -> entry point that
+    // the dispatcher probes in generated code before it calls GetOrEmit(). A32AddressSpace::EmitPrelude()
+    // in a32_address_space.cpp emits the probe; its index must match FastDispatchIndex().
+    struct FastDispatchEntry {
+        u64 descriptor = ~u64{0};
+        CodePtr code_ptr = nullptr;
+    };
+    static constexpr size_t fast_dispatch_table_bits = 16;
+    static constexpr size_t fast_dispatch_table_size = size_t{1} << fast_dispatch_table_bits;
+    static constexpr size_t FastDispatchIndex(u64 descriptor) {
+        return ((descriptor ^ (descriptor >> 32)) >> 1) & (fast_dispatch_table_size - 1);
+    }
+    void FastDispatchInsert(IR::LocationDescriptor descriptor, CodePtr code_ptr) {
+        fast_dispatch_table[FastDispatchIndex(descriptor.Value())] = {descriptor.Value(), code_ptr};
+    }
+    void FastDispatchErase(IR::LocationDescriptor descriptor) {
+        FastDispatchEntry& entry = fast_dispatch_table[FastDispatchIndex(descriptor.Value())];
+        if (entry.descriptor == descriptor.Value()) {
+            entry = {};
+        }
+    }
+
     const size_t code_cache_size;
     oaknut::CodeBlock mem;
     oaknut::CodeGenerator code;
@@ -88,6 +111,7 @@ protected:
     ExceptionHandler exception_handler;
     FastmemManager fastmem_manager;
     EmitBuffers emit_buffers;
+    std::unique_ptr<FastDispatchEntry[]> fast_dispatch_table;
 
     struct PreludeInfo {
         std::ptrdiff_t end_of_prelude;

@@ -308,7 +308,8 @@ void A32AddressSpace::EmitPrelude() {
 
     prelude_info.return_to_dispatcher = code.xptr<void*>();
     {
-        oaknut::Label l_this, l_addr;
+        oaknut::Label l_this, l_addr, l_fast_dispatch_table;
+        const bool fast_dispatch = conf.HasOptimization(OptimizationFlag::FastDispatch);
 
         code.LDAR(Wscratch0, Xhalt);
         code.CBNZ(Wscratch0, return_from_run_code);
@@ -318,6 +319,24 @@ void A32AddressSpace::EmitPrelude() {
             code.B(LE, return_from_run_code);
         }
 
+        if (fast_dispatch) {
+            // Probe the fast dispatch table; a miss falls through to GetOrEmit(), which fills the entry.
+            // The caller-saved registers are free here: guest state is in Xstate, as for the call below.
+            oaknut::Label miss;
+            static_assert(offsetof(A32JitState, regs) + 16 * sizeof(u32) == offsetof(A32JitState, upper_location_descriptor));
+            code.LDUR(X0, Xstate, offsetof(A32JitState, regs) + 15 * sizeof(u32));
+            code.EOR(Xscratch0, X0, X0, LSR, 32);
+            code.UBFX(Xscratch0, Xscratch0, 1, fast_dispatch_table_bits);
+            code.LDR(Xscratch1, l_fast_dispatch_table);
+            static_assert(sizeof(FastDispatchEntry) == 16);
+            code.ADD(Xscratch1, Xscratch1, Xscratch0, LSL, 4);
+            code.LDP(Xscratch0, X1, Xscratch1, 0);
+            code.CMP(X0, Xscratch0);
+            code.B(NE, miss);
+            code.BR(X1);
+            code.l(miss);
+        }
+
         code.LDR(X0, l_this);
         code.MOV(X1, Xstate);
         code.LDR(Xscratch0, l_addr);
@@ -325,6 +344,12 @@ void A32AddressSpace::EmitPrelude() {
         code.BR(X0);
 
         const auto fn = [](A32AddressSpace& self, A32JitState& context) -> CodePtr {
+            const IR::LocationDescriptor descriptor = context.GetLocationDescriptor();
+            const CodePtr code_ptr = self.GetOrEmit(descriptor);
+            self.FastDispatchInsert(descriptor, code_ptr);
+            return code_ptr;
+        };
+        const auto fn_no_fast_dispatch = [](A32AddressSpace& self, A32JitState& context) -> CodePtr {
             return self.GetOrEmit(context.GetLocationDescriptor());
         };
 
@@ -332,7 +357,9 @@ void A32AddressSpace::EmitPrelude() {
         code.l(l_this);
         code.dx(mcl::bit_cast<u64>(this));
         code.l(l_addr);
-        code.dx(mcl::bit_cast<u64>(Common::FptrCast(fn)));
+        code.dx(fast_dispatch ? mcl::bit_cast<u64>(Common::FptrCast(fn)) : mcl::bit_cast<u64>(Common::FptrCast(fn_no_fast_dispatch)));
+        code.l(l_fast_dispatch_table);
+        code.dx(mcl::bit_cast<u64>(fast_dispatch_table.get()));
     }
 
     prelude_info.return_from_run_code = code.xptr<void*>();
