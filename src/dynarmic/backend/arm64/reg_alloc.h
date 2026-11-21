@@ -357,6 +357,16 @@ private:
     // Spill slots at or above this index have held nothing in this block.
     size_t spills_used{};
 
+    // Locations whose use counts changed in the current instruction, so UpdateAllUses() visits only
+    // them: UpdateUses() changes nothing in a location that wasn't touched since the last call.
+    // MarkTouched() is called wherever uses_this_inst, expected_uses or values are set.
+    static_assert(SpillCount <= 64);
+    u32 touched_gprs = 0;
+    u32 touched_fprs = 0;
+    bool touched_flags = false;
+    u64 touched_spills = 0;
+    void MarkTouched(const HostLocInfo& info);
+
     // Last known location of each value, indexed by IR::Inst::GetName(). Only a hint:
     // ValueLocation() checks that the location still holds the value before using it.
     std::vector<std::optional<HostLoc>>& location_hints;

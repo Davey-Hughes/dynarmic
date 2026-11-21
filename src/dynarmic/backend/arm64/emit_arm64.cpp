@@ -264,7 +264,9 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
 
     fpsr_manager.Spill();
 
+#ifndef MCL_IGNORE_ASSERTS
     reg_alloc.AssertNoMoreUses();
+#endif
 
     EmitAddCycles(code, ctx, block.CycleCount());
     conf.emit_terminal(code, ctx);

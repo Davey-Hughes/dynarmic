@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <functional>
 #include <iterator>
 
 #include <mcl/assert.hpp>
@@ -134,7 +136,9 @@ RegAlloc::ArgumentInfo RegAlloc::GetArgumentInfo(IR::Inst* inst) {
         ret[i].value = arg;
         if (!arg.IsImmediate() && !IsValuelessType(arg.GetType())) {
             ASSERT_MSG(ValueLocation(arg.GetInst()), "argument must already been defined");
-            ValueInfo(arg.GetInst()).uses_this_inst++;
+            HostLocInfo& info = ValueInfo(arg.GetInst());
+            info.uses_this_inst++;
+            MarkTouched(info);
         }
     }
     return ret;
@@ -235,6 +239,7 @@ void RegAlloc::AddToLocationOf(IR::Inst* inst, const IR::Inst* existing) {
     auto& info = ValueInfo(*location);
     info.values.push_back(inst);
     info.expected_uses += inst->UseCount();
+    MarkTouched(info);
     SetLocationHint(inst, *location);
 }
 
@@ -248,20 +253,42 @@ void RegAlloc::DefineAsRegister(IR::Inst* inst, oaknut::Reg reg) {
     ASSERT(info.IsCompletelyEmpty());
     info.values.push_back(inst);
     info.expected_uses += inst->UseCount();
+    MarkTouched(info);
     SetLocationHint(inst, HostLoc{reg.is_vector() ? HostLoc::Kind::Fpr : HostLoc::Kind::Gpr, reg.index()});
 }
 
+void RegAlloc::MarkTouched(const HostLocInfo& info) {
+    const std::less<const HostLocInfo*> less;
+    const HostLocInfo* const p = &info;
+    if (!less(p, gprs.data()) && less(p, gprs.data() + gprs.size())) {
+        touched_gprs |= u32{1} << (p - gprs.data());
+    } else if (!less(p, fprs.data()) && less(p, fprs.data() + fprs.size())) {
+        touched_fprs |= u32{1} << (p - fprs.data());
+    } else if (p == &flags) {
+        touched_flags = true;
+    } else {
+        ASSERT(!less(p, spills.data()) && less(p, spills.data() + spills.size()));
+        touched_spills |= u64{1} << (p - spills.data());
+    }
+}
+
 void RegAlloc::UpdateAllUses() {
-    for (auto& gpr : gprs) {
-        gpr.UpdateUses();
+    for (u32 m = touched_gprs; m; m &= m - 1) {
+        gprs[std::countr_zero(m)].UpdateUses();
     }
-    for (auto& fpr : fprs) {
-        fpr.UpdateUses();
+    for (u32 m = touched_fprs; m; m &= m - 1) {
+        fprs[std::countr_zero(m)].UpdateUses();
     }
-    flags.UpdateUses();
-    for (size_t i = 0; i < spills_used; i++) {
-        spills[i].UpdateUses();
+    if (touched_flags) {
+        flags.UpdateUses();
     }
+    for (u64 m = touched_spills; m; m &= m - 1) {
+        spills[std::countr_zero(m)].UpdateUses();
+    }
+    touched_gprs = 0;
+    touched_fprs = 0;
+    touched_flags = false;
+    touched_spills = 0;
 }
 
 void RegAlloc::AssertAllUnlocked() const {
@@ -379,6 +406,7 @@ int RegAlloc::RealizeReadImpl(const IR::Value& value) {
 
         gprs[new_location_index] = std::exchange(ValueInfo(*current_location), {});
         gprs[new_location_index].realized = true;
+        MarkTouched(gprs[new_location_index]);
         SetLocationHints(HostLoc{HostLoc::Kind::Gpr, new_location_index});
         return new_location_index;
     } else if constexpr (required_kind == HostLoc::Kind::Fpr) {
@@ -402,6 +430,7 @@ int RegAlloc::RealizeReadImpl(const IR::Value& value) {
 
         fprs[new_location_index] = std::exchange(ValueInfo(*current_location), {});
         fprs[new_location_index].realized = true;
+        MarkTouched(fprs[new_location_index]);
         SetLocationHints(HostLoc{HostLoc::Kind::Fpr, new_location_index});
         return new_location_index;
     } else if constexpr (required_kind == HostLoc::Kind::Flags) {
@@ -423,17 +452,20 @@ int RegAlloc::RealizeWriteImpl(const IR::Inst* value) {
         const int new_location_index = AllocateRegister(gprs, gpr_order);
         SpillGpr(new_location_index);
         gprs[new_location_index].SetupLocation(value);
+        MarkTouched(gprs[new_location_index]);
         SetLocationHint(value, HostLoc{HostLoc::Kind::Gpr, new_location_index});
         return new_location_index;
     } else if constexpr (kind == HostLoc::Kind::Fpr) {
         const int new_location_index = AllocateRegister(fprs, fpr_order);
         SpillFpr(new_location_index);
         fprs[new_location_index].SetupLocation(value);
+        MarkTouched(fprs[new_location_index]);
         SetLocationHint(value, HostLoc{HostLoc::Kind::Fpr, new_location_index});
         return new_location_index;
     } else if constexpr (kind == HostLoc::Kind::Flags) {
         SpillFlags();
         flags.SetupLocation(value);
+        MarkTouched(flags);
         SetLocationHint(value, HostLoc{HostLoc::Kind::Flags, 0});
         return 0;
     } else {
@@ -500,6 +532,7 @@ void RegAlloc::SpillGpr(int index) {
     const int new_location_index = FindFreeSpill();
     code.STR(oaknut::XReg{index}, SP, spill_offset + new_location_index * spill_slot_size);
     spills[new_location_index] = std::exchange(gprs[index], {});
+    MarkTouched(spills[new_location_index]);
     spills_used = std::max(spills_used, static_cast<size_t>(new_location_index) + 1);
     SetLocationHints(HostLoc{HostLoc::Kind::Spill, new_location_index});
 }
@@ -512,6 +545,7 @@ void RegAlloc::SpillFpr(int index) {
     const int new_location_index = FindFreeSpill();
     code.STR(oaknut::QReg{index}, SP, spill_offset + new_location_index * spill_slot_size);
     spills[new_location_index] = std::exchange(fprs[index], {});
+    MarkTouched(spills[new_location_index]);
     spills_used = std::max(spills_used, static_cast<size_t>(new_location_index) + 1);
     SetLocationHints(HostLoc{HostLoc::Kind::Spill, new_location_index});
 }
@@ -545,6 +579,7 @@ void RegAlloc::ReadWriteFlags(Argument& read, IR::Inst* write) {
 
     if (write) {
         flags.SetupLocation(write);
+        MarkTouched(flags);
         flags.realized = false;
         SetLocationHint(write, HostLoc{HostLoc::Kind::Flags, 0});
     }
@@ -559,6 +594,7 @@ void RegAlloc::SpillFlags() {
     SpillGpr(new_location_index);
     code.MRS(oaknut::XReg{new_location_index}, oaknut::SystemReg::NZCV);
     gprs[new_location_index] = std::exchange(flags, {});
+    MarkTouched(gprs[new_location_index]);
     SetLocationHints(HostLoc{HostLoc::Kind::Gpr, new_location_index});
 }
 
