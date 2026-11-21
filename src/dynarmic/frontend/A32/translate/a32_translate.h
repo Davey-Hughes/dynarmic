@@ -29,6 +29,11 @@ struct TranslationOptions {
     /// If this is false, we treat the instruction as a NOP.
     /// If this is true, we emit an ExceptionRaised instruction.
     bool hook_hint_instructions = true;
+
+    /// This changes how we translate a conditional ARM B that follows other instructions.
+    /// If this is false, the block ends before the B, which then starts a block of its own.
+    /// If this is true, the block ends with the B, as an If terminal.
+    bool fold_conditional_branches = false;
 };
 
 /**

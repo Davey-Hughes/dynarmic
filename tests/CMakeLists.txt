@@ -12,6 +12,7 @@ add_executable(dynarmic_tests
 if ("A32" IN_LIST DYNARMIC_FRONTENDS)
     target_sources(dynarmic_tests PRIVATE
         A32/test_arm_disassembler.cpp
+        A32/test_arm_condb_fold.cpp
         A32/test_arm_instructions.cpp
         A32/test_coprocessor.cpp
         A32/test_decoder_buckets.cpp

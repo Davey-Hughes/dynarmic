@@ -32,6 +32,10 @@ enum class OptimizationFlag : std::uint32_t {
     ConstProp = 0x00000010,
     /// This is enables miscellaneous safe IR optimizations.
     MiscIROpt = 0x00000020,
+    /// This is an A32 frontend optimization. A conditional ARM B that follows other instructions
+    /// ends their block with an If terminal, instead of starting a block of its own.
+    /// This is a safe optimization.
+    FoldConditionalBranches = 0x00000040,
 
     /// This is an UNSAFE optimization that reduces accuracy of fused multiply-add operations.
     /// This unfuses fused instructions to improve performance on host CPUs without FMA support.
