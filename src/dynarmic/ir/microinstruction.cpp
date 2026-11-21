@@ -559,21 +559,31 @@ bool Inst::IsSetCheckBitOperation() const {
 }
 
 bool Inst::MayHaveSideEffects() const {
-    return op == Opcode::PushRSB
-        || op == Opcode::CallHostFunction
-        || op == Opcode::A64DataCacheOperationRaised
-        || op == Opcode::A64InstructionCacheOperationRaised
-        || IsSetCheckBitOperation()
-        || IsBarrier()
-        || CausesCPUException()
-        || WritesToCoreRegister()
-        || WritesToSystemRegister()
-        || WritesToCPSR()
-        || WritesToFPCR()
-        || WritesToFPSR()
-        || AltersExclusiveState()
-        || IsMemoryWrite()
-        || IsCoprocessorInstruction();
+    // The answer depends on the opcode alone, and dead code elimination asks for every unused instruction.
+    static const std::array<bool, OpcodeCount> table = [] {
+        std::array<bool, OpcodeCount> result{};
+        for (size_t i = 0; i < OpcodeCount; i++) {
+            const Inst inst(static_cast<Opcode>(i));
+            result[i] = inst.op == Opcode::PushRSB
+                     || inst.op == Opcode::CallHostFunction
+                     || inst.op == Opcode::A64DataCacheOperationRaised
+                     || inst.op == Opcode::A64InstructionCacheOperationRaised
+                     || inst.IsSetCheckBitOperation()
+                     || inst.IsBarrier()
+                     || inst.CausesCPUException()
+                     || inst.WritesToCoreRegister()
+                     || inst.WritesToSystemRegister()
+                     || inst.WritesToCPSR()
+                     || inst.WritesToFPCR()
+                     || inst.WritesToFPSR()
+                     || inst.AltersExclusiveState()
+                     || inst.IsMemoryWrite()
+                     || inst.IsCoprocessorInstruction();
+        }
+        return result;
+    }();
+
+    return table[static_cast<size_t>(op)];
 }
 
 bool Inst::IsAPseudoOperation() const {
