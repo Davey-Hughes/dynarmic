@@ -103,6 +103,7 @@ void AddressSpace::ClearCache() {
     reverse_block_entries.clear();
     block_infos.clear();
     block_references.clear();
+    emit_buffers.block_lists.Clear();
     code.set_offset(prelude_info.end_of_prelude);
 }
 

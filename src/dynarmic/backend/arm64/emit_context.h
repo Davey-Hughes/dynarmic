@@ -104,10 +104,12 @@ struct EmitBuffers {
     std::vector<DeferredEmit> deferred_emits;
     std::vector<VfpMemoryInfo> vfp_memory;  // by IR::Inst::GetName()
     std::deque<oaknut::Label> labels;       // a deque: SharedLabels point into it
-    // EmitArm64 copies these into the EmittedBlockInfo at the end, which allocates them once at their size.
+    // EmitArm64 copies these into block_lists at the end, for the EmittedBlockInfo.
     std::vector<Relocation> relocations;
     std::vector<BlockRelocation> block_relocations;
     FastmemPatchTable fastmem_patches;
+    // Not per block: it holds the lists of every block emitted since the last ClearCache().
+    BlockListArena block_lists;
 };
 
 struct EmitContext {

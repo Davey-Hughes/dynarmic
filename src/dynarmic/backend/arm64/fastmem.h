@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -35,15 +36,11 @@ struct FastmemPatchInfo {
     bool recompile;
 };
 
-// A block's fastmem accesses by code offset. It is only searched when an access faults, so it is a sorted
-// vector: Add() appends, which the emitters do in increasing offset order (their deferred emits run in the
-// order the accesses were emitted).
-class FastmemPatchTable {
-public:
-    void Add(std::ptrdiff_t offset, FastmemPatchInfo info) {
-        ASSERT(entries.empty() || entries.back().first < offset);
-        entries.emplace_back(offset, info);
-    }
+using FastmemPatchEntry = std::pair<std::ptrdiff_t, FastmemPatchInfo>;
+
+// A block's fastmem accesses by code offset, in increasing order. It is only searched when an access faults.
+struct FastmemPatchList {
+    std::span<const FastmemPatchEntry> entries;
 
     const FastmemPatchInfo* Find(std::ptrdiff_t offset) const {
         const auto it = std::lower_bound(entries.begin(), entries.end(), offset, [](const auto& entry, std::ptrdiff_t value) {
@@ -51,18 +48,27 @@ public:
         });
         return it != entries.end() && it->first == offset ? &it->second : nullptr;
     }
+};
+
+// Collects a block's fastmem accesses while it is emitted. Add() appends, which the emitters do in increasing
+// offset order (their deferred emits run in the order the accesses were emitted).
+class FastmemPatchTable {
+public:
+    void Add(std::ptrdiff_t offset, FastmemPatchInfo info) {
+        ASSERT(entries.empty() || entries.back().first < offset);
+        entries.emplace_back(offset, info);
+    }
 
     void Clear() {
         entries.clear();
     }
 
-    // Copies another table's entries, allocating exactly their count.
-    void Assign(const FastmemPatchTable& other) {
-        entries.assign(other.entries.begin(), other.entries.end());
+    std::span<const FastmemPatchEntry> Entries() const {
+        return entries;
     }
 
 private:
-    std::vector<std::pair<std::ptrdiff_t, FastmemPatchInfo>> entries;
+    std::vector<FastmemPatchEntry> entries;
 };
 
 class FastmemManager {

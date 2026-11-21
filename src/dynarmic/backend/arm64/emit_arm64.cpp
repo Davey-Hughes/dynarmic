@@ -279,11 +279,9 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     code.BRK(0);
 
     ebi.size = code.xptr<CodePtr>() - ebi.entry_point;
-    // Emitters add to ctx.relocations. One added to ebi.relocations directly would be overwritten here.
-    ASSERT(ebi.relocations.empty());
-    ebi.relocations.assign(ctx.relocations.begin(), ctx.relocations.end());
-    ebi.block_relocations.assign(ctx.block_relocations.begin(), ctx.block_relocations.end());
-    ebi.fastmem_patch_info.Assign(ctx.fastmem_patches);
+    ebi.relocations = buffers.block_lists.Store<Relocation>(ctx.relocations);
+    ebi.block_relocations = buffers.block_lists.Store<BlockRelocation>(ctx.block_relocations);
+    ebi.fastmem_patch_info = {buffers.block_lists.Store(ctx.fastmem_patches.Entries())};
     reg_alloc.FinishBlock();
     return ebi;
 }

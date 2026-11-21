@@ -5,9 +5,12 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <span>
+#include <type_traits>
 #include <vector>
 
 #include <mcl/stdint.hpp>
@@ -99,12 +102,54 @@ struct BlockRelocation {
     BlockRelocationType type;
 };
 
+// Storage for the lists of emitted blocks. They stay until every block is dropped (AddressSpace::ClearCache()),
+// so they are carved out of large chunks instead of allocated one by one.
+class BlockListArena {
+public:
+    template<typename T>
+    std::span<const T> Store(std::span<const T> list) {
+        static_assert(std::is_trivially_destructible_v<T> && alignof(T) <= alignment);
+        if (list.empty()) {
+            return {};
+        }
+        const size_t bytes = (list.size_bytes() + alignment - 1) & ~(alignment - 1);
+        if (bytes > remaining) {
+            NewChunk(bytes);
+        }
+        T* const stored = reinterpret_cast<T*>(next);
+        std::uninitialized_copy(list.begin(), list.end(), stored);
+        next += bytes;
+        remaining -= bytes;
+        return {stored, list.size()};
+    }
+
+    void Clear() {
+        chunks.clear();
+        remaining = 0;
+    }
+
+private:
+    static constexpr size_t alignment = alignof(std::max_align_t);
+    static constexpr size_t chunk_size = 32 * 1024;
+
+    void NewChunk(size_t min_bytes) {
+        const size_t size = std::max(chunk_size, min_bytes);
+        next = chunks.emplace_back(std::make_unique_for_overwrite<std::byte[]>(size)).get();
+        remaining = size;
+    }
+
+    std::vector<std::unique_ptr<std::byte[]>> chunks;
+    std::byte* next = nullptr;
+    size_t remaining = 0;
+};
+
+// The lists are in a BlockListArena.
 struct EmittedBlockInfo {
     CodePtr entry_point;
     size_t size;
-    std::vector<Relocation> relocations;
-    std::vector<BlockRelocation> block_relocations;
-    FastmemPatchTable fastmem_patch_info;
+    std::span<const Relocation> relocations;
+    std::span<const BlockRelocation> block_relocations;
+    FastmemPatchList fastmem_patch_info;
 };
 
 struct EmitConfig {
