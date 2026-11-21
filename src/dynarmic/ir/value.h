@@ -39,19 +39,58 @@ public:
 
     Value()
             : type(Type::Void) {}
-    explicit Value(Inst* value);
-    explicit Value(A32::Reg value);
-    explicit Value(A32::ExtReg value);
-    explicit Value(A64::Reg value);
-    explicit Value(A64::Vec value);
-    explicit Value(bool value);
-    explicit Value(u8 value);
-    explicit Value(u16 value);
-    explicit Value(u32 value);
-    explicit Value(u64 value);
-    explicit Value(CoprocessorInfo value);
-    explicit Value(Cond value);
-    explicit Value(AccType value);
+    explicit Value(Inst* value)
+            : type(Type::Opaque) {
+        inner.inst = value;
+    }
+    explicit Value(A32::Reg value)
+            : type(Type::A32Reg) {
+        inner.imm_a32regref = value;
+    }
+    explicit Value(A32::ExtReg value)
+            : type(Type::A32ExtReg) {
+        inner.imm_a32extregref = value;
+    }
+    explicit Value(A64::Reg value)
+            : type(Type::A64Reg) {
+        inner.imm_a64regref = value;
+    }
+    explicit Value(A64::Vec value)
+            : type(Type::A64Vec) {
+        inner.imm_a64vecref = value;
+    }
+    explicit Value(bool value)
+            : type(Type::U1) {
+        inner.imm_u1 = value;
+    }
+    explicit Value(u8 value)
+            : type(Type::U8) {
+        inner.imm_u8 = value;
+    }
+    explicit Value(u16 value)
+            : type(Type::U16) {
+        inner.imm_u16 = value;
+    }
+    explicit Value(u32 value)
+            : type(Type::U32) {
+        inner.imm_u32 = value;
+    }
+    explicit Value(u64 value)
+            : type(Type::U64) {
+        inner.imm_u64 = value;
+    }
+    explicit Value(CoprocessorInfo value)
+            : type(Type::CoprocInfo) {
+        inner.imm_coproc = value;
+    }
+    explicit Value(Cond value)
+            : type(Type::Cond) {
+        inner.imm_cond = value;
+    }
+    explicit Value(AccType value)
+            : type(Type::AccType) {
+        inner.imm_acctype = value;
+    }
 
     static Value EmptyNZCVImmediateMarker();
 
