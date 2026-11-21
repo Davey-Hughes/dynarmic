@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <random>
@@ -118,6 +119,8 @@ public:
             , rw{std::exchange(other.rw, RWType::Void)}
             , read_value{std::exchange(other.read_value, {})}
             , write_value{std::exchange(other.write_value, nullptr)}
+            , locked_value{std::exchange(other.locked_value, nullptr)}
+            , locked_location{other.locked_location}
             , reg{std::exchange(other.reg, std::nullopt)} {
     }
     RAReg& operator=(RAReg&&) = delete;
@@ -135,6 +138,10 @@ private:
     RWType rw;
     IR::Value read_value;
     const IR::Inst* write_value;
+    // The value this keeps locked, if any, and where it was last seen. The location is checked before
+    // use: realizing another RAReg of the same value can move it.
+    const IR::Inst* locked_value = nullptr;
+    HostLoc locked_location{};
     std::optional<T> reg;
 };
 
@@ -146,7 +153,9 @@ struct HostLocInfo final {
     size_t accumulated_uses = 0;
     size_t expected_uses = 0;
 
-    bool Contains(const IR::Inst*) const;
+    bool Contains(const IR::Inst* value) const {
+        return std::find(values.begin(), values.end(), value) != values.end();
+    }
     void SetupScratchLocation();
     void SetupLocation(const IR::Inst*);
     bool IsCompletelyEmpty() const;
@@ -357,9 +366,30 @@ private:
     void MarkDefined(const IR::Inst* value);
     void SetLocationHint(const IR::Inst* value, HostLoc host_loc) const;
     void SetLocationHints(HostLoc host_loc) const;
-    const HostLocInfo& ValueInfo(HostLoc host_loc) const;
-    HostLocInfo& ValueInfo(HostLoc host_loc);
+    const HostLocInfo& ValueInfo(HostLoc host_loc) const {
+        switch (host_loc.kind) {
+        case HostLoc::Kind::Gpr:
+            return gprs[static_cast<size_t>(host_loc.index)];
+        case HostLoc::Kind::Fpr:
+            return fprs[static_cast<size_t>(host_loc.index)];
+        case HostLoc::Kind::Flags:
+            return flags;
+        case HostLoc::Kind::Spill:
+            return spills[static_cast<size_t>(host_loc.index)];
+        }
+        ASSERT_FALSE("RegAlloc::ValueInfo: Invalid HostLoc::Kind");
+    }
+    HostLocInfo& ValueInfo(HostLoc host_loc) {
+        return const_cast<HostLocInfo&>(std::as_const(*this).ValueInfo(host_loc));
+    }
     HostLocInfo& ValueInfo(const IR::Inst* value);
+    // For a caller that knows where value was last: looks it up only if it is no longer there.
+    HostLocInfo& ValueInfo(const IR::Inst* value, HostLoc last_location) {
+        HostLocInfo& info = ValueInfo(last_location);
+        return info.Contains(value) ? info : ValueInfo(value);
+    }
+    // Locks value in its location, which is returned.
+    HostLoc LockValue(const IR::Inst* value);
 
     oaknut::CodeGenerator& code;
     FpsrManager& fpsr_manager;
@@ -402,14 +432,15 @@ template<typename T>
 RAReg<T>::RAReg(RegAlloc& reg_alloc, RWType rw, const IR::Value& read_value, const IR::Inst* write_value)
         : reg_alloc{reg_alloc}, rw{rw}, read_value{read_value}, write_value{write_value} {
     if (rw != RWType::Write && !read_value.IsImmediate()) {
-        reg_alloc.ValueInfo(read_value.GetInst()).locked++;
+        locked_value = read_value.GetInst();
+        locked_location = reg_alloc.LockValue(locked_value);
     }
 }
 
 template<typename T>
 RAReg<T>::~RAReg() {
-    if (rw != RWType::Write && !read_value.IsImmediate()) {
-        reg_alloc.ValueInfo(read_value.GetInst()).locked--;
+    if (locked_value) {
+        reg_alloc.ValueInfo(locked_value, locked_location).locked--;
     }
     if (reg) {
         reg_alloc.ValueInfo(HostLoc{kind, reg->index()}).realized = false;
@@ -420,7 +451,15 @@ template<typename T>
 void RAReg<T>::Realize() {
     switch (rw) {
     case RWType::Read:
+        if (locked_value && locked_location.kind == kind) {
+            if (HostLocInfo& info = reg_alloc.ValueInfo(HostLoc{kind, locked_location.index}); info.Contains(locked_value)) {
+                info.realized = true;
+                reg = T{locked_location.index};
+                break;
+            }
+        }
         reg = T{reg_alloc.RealizeReadImpl<kind>(read_value)};
+        locked_location = HostLoc{kind, reg->index()};
         break;
     case RWType::Write:
         reg = T{reg_alloc.RealizeWriteImpl<kind>(write_value)};

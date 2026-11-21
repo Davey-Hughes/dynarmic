@@ -87,10 +87,6 @@ HostLoc::Kind Argument::CurrentLocationKind() const {
     return reg_alloc.ValueLocation(value.GetInst())->kind;
 }
 
-bool HostLocInfo::Contains(const IR::Inst* value) const {
-    return std::find(values.begin(), values.end(), value) != values.end();
-}
-
 void HostLocInfo::SetupScratchLocation() {
     ASSERT(IsCompletelyEmpty());
     realized = true;
@@ -724,28 +720,17 @@ void RegAlloc::SetLocationHints(HostLoc host_loc) const {
     }
 }
 
-const HostLocInfo& RegAlloc::ValueInfo(HostLoc host_loc) const {
-    switch (host_loc.kind) {
-    case HostLoc::Kind::Gpr:
-        return gprs[static_cast<size_t>(host_loc.index)];
-    case HostLoc::Kind::Fpr:
-        return fprs[static_cast<size_t>(host_loc.index)];
-    case HostLoc::Kind::Flags:
-        return flags;
-    case HostLoc::Kind::Spill:
-        return spills[static_cast<size_t>(host_loc.index)];
-    }
-    ASSERT_FALSE("RegAlloc::ValueInfo: Invalid HostLoc::Kind");
-}
-
-HostLocInfo& RegAlloc::ValueInfo(HostLoc host_loc) {
-    return const_cast<HostLocInfo&>(std::as_const(*this).ValueInfo(host_loc));
-}
-
 HostLocInfo& RegAlloc::ValueInfo(const IR::Inst* value) {
     const auto location = ValueLocation(value);
     ASSERT_MSG(location, "RegAlloc::ValueInfo: Value not found");
     return ValueInfo(*location);
+}
+
+HostLoc RegAlloc::LockValue(const IR::Inst* value) {
+    const auto location = ValueLocation(value);
+    ASSERT_MSG(location, "RegAlloc::LockValue: Value not found");
+    ValueInfo(*location).locked++;
+    return *location;
 }
 
 }  // namespace Dynarmic::Backend::Arm64
