@@ -101,6 +101,7 @@ void AddressSpace::ClearCache() {
     block_entries.clear();
     reverse_block_entries.clear();
     block_infos.clear();
+    block_info_store.clear();
     block_references.clear();
     code.set_offset(prelude_info.end_of_prelude);
 }
@@ -128,10 +129,9 @@ CodePtr AddressSpace::Emit(IR::Block block) {
     ASSERT(block_entries.insert({block.Location(), entry_point}).second);
     ASSERT(reverse_block_entries.empty() || reverse_block_entries.back().first < entry_point);
     reverse_block_entries.emplace_back(entry_point, block.Location());
-    const auto [block_info_iter, inserted] = block_infos.insert({entry_point, std::move(new_block_info)});
+    const EmittedBlockInfo& block_info = block_info_store.emplace_back(std::move(new_block_info));
+    const bool inserted = block_infos.insert({entry_point, &block_info}).second;
     ASSERT(inserted);
-    // Nothing below inserts into block_infos, so this reference stays valid.
-    const EmittedBlockInfo& block_info = block_info_iter->second;
 
     Link(block_info);
     RelinkForDescriptor(block.Location(), entry_point);
@@ -323,7 +323,7 @@ void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor,
 
     for (auto code_ptr : references->second) {
         if (auto block_iter = block_infos.find(code_ptr); block_iter != block_infos.end()) {
-            const EmittedBlockInfo& block_info = block_iter->second;
+            const EmittedBlockInfo& block_info = *block_iter->second;
 
             for (const auto& block_relocation : block_info.block_relocations) {
                 if (block_relocation.target == target_descriptor) {
@@ -350,7 +350,7 @@ FakeCall AddressSpace::FastmemCallback(u64 host_pc) {
             goto fail;
         }
 
-        const FastmemPatchInfo* const patch_entry = block_info->second.fastmem_patch_info.Find(host_ptr - entry_point);
+        const FastmemPatchInfo* const patch_entry = block_info->second->fastmem_patch_info.Find(host_ptr - entry_point);
         if (!patch_entry) {
             goto fail;
         }
