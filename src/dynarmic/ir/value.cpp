@@ -28,24 +28,13 @@ Type Value::GetTypeThroughIdentity() const {
     return inner.inst->GetArg(0).GetType();
 }
 
-A32::Reg Value::GetA32RegRef() const {
-    ASSERT(type == Type::A32Reg);
-    return inner.imm_a32regref;
-}
-
-A32::ExtReg Value::GetA32ExtRegRef() const {
-    ASSERT(type == Type::A32ExtReg);
-    return inner.imm_a32extregref;
-}
-
-A64::Reg Value::GetA64RegRef() const {
-    ASSERT(type == Type::A64Reg);
-    return inner.imm_a64regref;
-}
-
-A64::Vec Value::GetA64VecRef() const {
-    ASSERT(type == Type::A64Vec);
-    return inner.imm_a64vecref;
+Value Value::ImmediateThroughIdentity(Type expected_type) const {
+    Value value = *this;
+    while (value.IsIdentity()) {
+        value = value.inner.inst->GetArg(0);
+    }
+    ASSERT(value.type == expected_type);
+    return value;
 }
 
 Inst* Value::GetInstRecursive() const {
@@ -53,62 +42,6 @@ Inst* Value::GetInstRecursive() const {
     if (IsIdentity())
         return inner.inst->GetArg(0).GetInstRecursive();
     return inner.inst;
-}
-
-bool Value::GetU1() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetU1();
-    ASSERT(type == Type::U1);
-    return inner.imm_u1;
-}
-
-u8 Value::GetU8() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetU8();
-    ASSERT(type == Type::U8);
-    return inner.imm_u8;
-}
-
-u16 Value::GetU16() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetU16();
-    ASSERT(type == Type::U16);
-    return inner.imm_u16;
-}
-
-u32 Value::GetU32() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetU32();
-    ASSERT(type == Type::U32);
-    return inner.imm_u32;
-}
-
-u64 Value::GetU64() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetU64();
-    ASSERT(type == Type::U64);
-    return inner.imm_u64;
-}
-
-Value::CoprocessorInfo Value::GetCoprocInfo() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetCoprocInfo();
-    ASSERT(type == Type::CoprocInfo);
-    return inner.imm_coproc;
-}
-
-Cond Value::GetCond() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetCond();
-    ASSERT(type == Type::Cond);
-    return inner.imm_cond;
-}
-
-AccType Value::GetAccType() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetAccType();
-    ASSERT(type == Type::AccType);
-    return inner.imm_acctype;
 }
 
 s64 Value::GetImmediateAsS64() const {

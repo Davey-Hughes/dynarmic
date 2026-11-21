@@ -104,18 +104,62 @@ public:
         return inner.inst;
     }
     Inst* GetInstRecursive() const;
-    A32::Reg GetA32RegRef() const;
-    A32::ExtReg GetA32ExtRegRef() const;
-    A64::Reg GetA64RegRef() const;
-    A64::Vec GetA64VecRef() const;
-    bool GetU1() const;
-    u8 GetU8() const;
-    u16 GetU16() const;
-    u32 GetU32() const;
-    u64 GetU64() const;
-    CoprocessorInfo GetCoprocInfo() const;
-    Cond GetCond() const;
-    AccType GetAccType() const;
+    A32::Reg GetA32RegRef() const {
+        ASSERT(type == Type::A32Reg);
+        return inner.imm_a32regref;
+    }
+    A32::ExtReg GetA32ExtRegRef() const {
+        ASSERT(type == Type::A32ExtReg);
+        return inner.imm_a32extregref;
+    }
+    A64::Reg GetA64RegRef() const {
+        ASSERT(type == Type::A64Reg);
+        return inner.imm_a64regref;
+    }
+    A64::Vec GetA64VecRef() const {
+        ASSERT(type == Type::A64Vec);
+        return inner.imm_a64vecref;
+    }
+    bool GetU1() const {
+        if (type == Type::U1)
+            return inner.imm_u1;
+        return ImmediateThroughIdentity(Type::U1).inner.imm_u1;
+    }
+    u8 GetU8() const {
+        if (type == Type::U8)
+            return inner.imm_u8;
+        return ImmediateThroughIdentity(Type::U8).inner.imm_u8;
+    }
+    u16 GetU16() const {
+        if (type == Type::U16)
+            return inner.imm_u16;
+        return ImmediateThroughIdentity(Type::U16).inner.imm_u16;
+    }
+    u32 GetU32() const {
+        if (type == Type::U32)
+            return inner.imm_u32;
+        return ImmediateThroughIdentity(Type::U32).inner.imm_u32;
+    }
+    u64 GetU64() const {
+        if (type == Type::U64)
+            return inner.imm_u64;
+        return ImmediateThroughIdentity(Type::U64).inner.imm_u64;
+    }
+    CoprocessorInfo GetCoprocInfo() const {
+        if (type == Type::CoprocInfo)
+            return inner.imm_coproc;
+        return ImmediateThroughIdentity(Type::CoprocInfo).inner.imm_coproc;
+    }
+    Cond GetCond() const {
+        if (type == Type::Cond)
+            return inner.imm_cond;
+        return ImmediateThroughIdentity(Type::Cond).inner.imm_cond;
+    }
+    AccType GetAccType() const {
+        if (type == Type::AccType)
+            return inner.imm_acctype;
+        return ImmediateThroughIdentity(Type::AccType).inner.imm_acctype;
+    }
 
     /**
      * Retrieves the immediate of a Value instance as a signed 64-bit value.
@@ -176,6 +220,8 @@ private:
     // The identity cases of IsImmediate() and GetType(), out of line so that those two stay inlinable.
     bool IsImmediateThroughIdentity() const;
     Type GetTypeThroughIdentity() const;
+    // The same for the immediate getters: the value at the end of the identity chain, which must have this type.
+    Value ImmediateThroughIdentity(Type expected_type) const;
 
     Type type;
 
