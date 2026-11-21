@@ -185,3 +185,6 @@ using NZCV = TypedValue<Type::NZCVFlags>;
 using Table = TypedValue<Type::Table>;
 
 }  // namespace Dynarmic::IR
+
+// The inline definitions of Value::IsIdentity(), IsImmediate() and GetType(), which need Inst.
+#include "dynarmic/ir/microinstruction.h"

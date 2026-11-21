@@ -10,6 +10,7 @@
 #include <mcl/container/intrusive_list.hpp>
 #include <mcl/stdint.hpp>
 
+#include "dynarmic/ir/opcodes.h"
 #include "dynarmic/ir/value.h"
 
 namespace Dynarmic::IR {
@@ -26,7 +27,7 @@ constexpr size_t max_arg_count = 4;
 class Inst final : public mcl::intrusive_list_node<Inst> {
 public:
     explicit Inst(Opcode op)
-            : op(op) {}
+            : op(op), num_args(static_cast<u8>(GetNumArgsOf(op))) {}
 
     /// Determines whether or not this instruction performs an arithmetic shift.
     bool IsArithmeticShift() const;
@@ -131,7 +132,7 @@ public:
     /// Get the type this instruction returns.
     Type GetType() const;
     /// Get the number of arguments this instruction has.
-    size_t NumArgs() const;
+    size_t NumArgs() const { return num_args; }
 
     Value GetArg(size_t index) const;
     void SetArg(size_t index, Value value);
@@ -153,10 +154,32 @@ private:
     Opcode op;
     unsigned use_count = 0;
     unsigned name = 0;
+    // GetNumArgsOf(op), kept here because NumArgs() is called for every argument loop.
+    u8 num_args;
     std::array<Value, max_arg_count> args;
 
     // Linked list of pseudooperations associated with this instruction.
     Inst* next_pseudoop = nullptr;
 };
+
+// Value's accessors that look at the instruction producing the value, inline because the compiler
+// and the emitter call them for every argument. value.h includes this header at its end.
+inline bool Value::IsIdentity() const {
+    return type == Type::Opaque && inner.inst->GetOpcode() == Opcode::Identity;
+}
+
+inline bool Value::IsImmediate() const {
+    if (IsIdentity())
+        return inner.inst->GetArg(0).IsImmediate();
+    return type != Type::Opaque;
+}
+
+inline Type Value::GetType() const {
+    if (IsIdentity())
+        return inner.inst->GetArg(0).GetType();
+    if (type == Type::Opaque)
+        return inner.inst->GetType();
+    return type;
+}
 
 }  // namespace Dynarmic::IR

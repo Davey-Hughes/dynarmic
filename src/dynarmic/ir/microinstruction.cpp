@@ -627,10 +627,6 @@ Type Inst::GetType() const {
     return GetTypeOf(op);
 }
 
-size_t Inst::NumArgs() const {
-    return GetNumArgsOf(op);
-}
-
 Value Inst::GetArg(size_t index) const {
 #ifndef MCL_IGNORE_ASSERTS
     ASSERT_MSG(index < GetNumArgsOf(op), "Inst::GetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
@@ -659,6 +655,7 @@ void Inst::SetArg(size_t index, Value value) {
 void Inst::Invalidate() {
     ClearArgs();
     op = Opcode::Void;
+    num_args = 0;
 }
 
 void Inst::ClearArgs() {
