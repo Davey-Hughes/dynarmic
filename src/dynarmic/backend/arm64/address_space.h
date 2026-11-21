@@ -68,7 +68,8 @@ protected:
 
     size_t GetRemainingSize();
     CodePtr Emit(IR::Block ir_block);
-    void Link(const EmittedBlockInfo& block);
+    // The info has to be the one in block_infos: block_references keeps its address.
+    void Link(const EmittedBlockInfo& block_info);
     void LinkBlockLink(const CodePtr entry_point, const CodePtr target_ptr, const BlockRelocation& block_relocation);
     void RelinkForDescriptor(IR::LocationDescriptor target_descriptor, CodePtr target_ptr);
 
@@ -105,12 +106,11 @@ protected:
     tsl::robin_map<IR::LocationDescriptor, CodePtr> block_entries;
     // Sorted by entry point: Emit() only appends code until ClearCache() resets it.
     std::vector<std::pair<CodePtr, IR::LocationDescriptor>> reverse_block_entries;
-    // Block infos by entry point. They live in block_info_store, which only grows until ClearCache(), so
-    // their addresses are stable and the map's entries stay small.
-    std::deque<EmittedBlockInfo> block_info_store;
-    tsl::robin_map<CodePtr, const EmittedBlockInfo*> block_infos;
+    // block_infos[i] belongs to reverse_block_entries[i]. Infos are only added until ClearCache(), so their
+    // addresses are stable.
+    std::deque<EmittedBlockInfo> block_infos;
     // The blocks that link to each target, each listed once (Link() adds a block's references together).
-    tsl::robin_map<IR::LocationDescriptor, boost::container::small_vector<CodePtr, 2>> block_references;
+    tsl::robin_map<IR::LocationDescriptor, boost::container::small_vector<const EmittedBlockInfo*, 2>> block_references;
 
     ExceptionHandler exception_handler;
     FastmemManager fastmem_manager;
