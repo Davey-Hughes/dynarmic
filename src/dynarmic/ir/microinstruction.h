@@ -6,6 +6,7 @@
 #pragma once
 
 #include <array>
+#include <initializer_list>
 
 #include <mcl/container/intrusive_list.hpp>
 #include <mcl/stdint.hpp>
@@ -28,6 +29,8 @@ class Inst final : public mcl::intrusive_list_node<Inst> {
 public:
     explicit Inst(Opcode op)
             : op(op), num_args(static_cast<u8>(GetNumArgsOf(op))) {}
+    /// Constructs an instruction with its arguments set.
+    Inst(Opcode op, std::initializer_list<Value> values);
 
     /// Determines whether or not this instruction performs an arithmetic shift.
     bool IsArithmeticShift() const;
@@ -154,9 +157,12 @@ public:
 
 private:
     void AssertValidGetArg(size_t index) const;
+    void AssertValidSetArg(size_t index, const Value& value) const;
 
     void Use(const Value& value);
     void UndoUse(const Value& value);
+    // The part of Use() that adds this pseudo-operation to the list of the instruction it reads.
+    void LinkPseudoOperation(const Value& value);
 
     Opcode op;
     unsigned use_count = 0;

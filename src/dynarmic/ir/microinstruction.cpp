@@ -14,6 +14,23 @@
 
 namespace Dynarmic::IR {
 
+Inst::Inst(Opcode op, std::initializer_list<Value> values)
+        : Inst(op) {
+    ASSERT(values.size() == num_args);
+
+    // A new instruction has no arguments to release, so this is SetArg() without that half.
+    size_t index = 0;
+    for (const Value& value : values) {
+#ifndef MCL_IGNORE_ASSERTS
+        AssertValidSetArg(index, value);
+#endif
+        if (!value.IsImmediate()) {
+            Use(value);
+        }
+        args[index++] = value;
+    }
+}
+
 bool Inst::IsArithmeticShift() const {
     return op == Opcode::ArithmeticShiftRight32
         || op == Opcode::ArithmeticShiftRight64;
@@ -632,10 +649,14 @@ void Inst::AssertValidGetArg(size_t index) const {
     ASSERT_MSG(!args[index].IsEmpty() || GetArgTypeOf(op, index) == IR::Type::Opaque, "Inst::GetArg: index {} is empty", index, args[index].GetType());
 }
 
-void Inst::SetArg(size_t index, Value value) {
-#ifndef MCL_IGNORE_ASSERTS
+void Inst::AssertValidSetArg(size_t index, const Value& value) const {
     ASSERT_MSG(index < GetNumArgsOf(op), "Inst::SetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
     ASSERT_MSG(AreTypesCompatible(value.GetType(), GetArgTypeOf(op, index)), "Inst::SetArg: type {} of argument {} not compatible with operation {} ({})", value.GetType(), index, op, GetArgTypeOf(op, index));
+}
+
+void Inst::SetArg(size_t index, Value value) {
+#ifndef MCL_IGNORE_ASSERTS
+    AssertValidSetArg(index, value);
 #endif
 
     if (!args[index].IsImmediate()) {
@@ -679,17 +700,21 @@ void Inst::Use(const Value& value) {
     value.GetInst()->use_count++;
 
     if (IsAPseudoOperation()) {
-        if (op == Opcode::GetNZCVFromOp) {
-            ASSERT_MSG(value.GetInst()->MayGetNZCVFromOp(), "This value doesn't support the GetNZCVFromOp pseduo-op");
-        }
-
-        Inst* insert_point = value.GetInst();
-        while (insert_point->next_pseudoop) {
-            insert_point = insert_point->next_pseudoop;
-            DEBUG_ASSERT(insert_point->GetArg(0).GetInst() == value.GetInst());
-        }
-        insert_point->next_pseudoop = this;
+        LinkPseudoOperation(value);
     }
+}
+
+void Inst::LinkPseudoOperation(const Value& value) {
+    if (op == Opcode::GetNZCVFromOp) {
+        ASSERT_MSG(value.GetInst()->MayGetNZCVFromOp(), "This value doesn't support the GetNZCVFromOp pseduo-op");
+    }
+
+    Inst* insert_point = value.GetInst();
+    while (insert_point->next_pseudoop) {
+        insert_point = insert_point->next_pseudoop;
+        DEBUG_ASSERT(insert_point->GetArg(0).GetInst() == value.GetInst());
+    }
+    insert_point->next_pseudoop = this;
 }
 
 void Inst::UndoUse(const Value& value) {
