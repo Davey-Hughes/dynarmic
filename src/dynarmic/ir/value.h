@@ -56,11 +56,14 @@ public:
     static Value EmptyNZCVImmediateMarker();
 
     bool IsIdentity() const;
-    bool IsEmpty() const;
+    bool IsEmpty() const { return type == Type::Void; }
     bool IsImmediate() const;
     Type GetType() const;
 
-    Inst* GetInst() const;
+    Inst* GetInst() const {
+        ASSERT(type == Type::Opaque);
+        return inner.inst;
+    }
     Inst* GetInstRecursive() const;
     A32::Reg GetA32RegRef() const;
     A32::ExtReg GetA32ExtRegRef() const;

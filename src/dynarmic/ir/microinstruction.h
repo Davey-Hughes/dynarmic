@@ -134,7 +134,12 @@ public:
     /// Get the number of arguments this instruction has.
     size_t NumArgs() const { return num_args; }
 
-    Value GetArg(size_t index) const;
+    Value GetArg(size_t index) const {
+#ifndef MCL_IGNORE_ASSERTS
+        AssertValidGetArg(index);
+#endif
+        return args[index];
+    }
     void SetArg(size_t index, Value value);
 
     void Invalidate();
@@ -148,6 +153,8 @@ public:
     unsigned GetName() const { return name; }
 
 private:
+    void AssertValidGetArg(size_t index) const;
+
     void Use(const Value& value);
     void UndoUse(const Value& value);
 

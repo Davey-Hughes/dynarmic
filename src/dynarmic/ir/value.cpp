@@ -93,10 +93,6 @@ Type Value::GetTypeThroughIdentity() const {
     return inner.inst->GetArg(0).GetType();
 }
 
-bool Value::IsEmpty() const {
-    return type == Type::Void;
-}
-
 A32::Reg Value::GetA32RegRef() const {
     ASSERT(type == Type::A32Reg);
     return inner.imm_a32regref;
@@ -115,11 +111,6 @@ A64::Reg Value::GetA64RegRef() const {
 A64::Vec Value::GetA64VecRef() const {
     ASSERT(type == Type::A64Vec);
     return inner.imm_a64vecref;
-}
-
-Inst* Value::GetInst() const {
-    ASSERT(type == Type::Opaque);
-    return inner.inst;
 }
 
 Inst* Value::GetInstRecursive() const {
