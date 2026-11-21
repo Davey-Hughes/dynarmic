@@ -25,10 +25,13 @@ protected:
     friend class A32Core;
 
     void EmitPrelude();
-    EmitConfig GetEmitConfig() override;
+    EmitConfig MakeEmitConfig() const;
+    const EmitConfig& GetEmitConfig() const override { return emit_conf; }
     void RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& block_info) override;
 
     const A32::UserConfig conf;
+    // Made once: a copy per block would also copy and release the coprocessor pointers.
+    const EmitConfig emit_conf;
     BlockRangeInformation<u32> block_ranges;
 };
 

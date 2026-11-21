@@ -51,7 +51,7 @@ public:
     void DumpDisassembly() const;
 
 protected:
-    virtual EmitConfig GetEmitConfig() = 0;
+    virtual const EmitConfig& GetEmitConfig() const = 0;
     virtual void RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& block_info) = 0;
 
     void ProtectCodeMemory() {

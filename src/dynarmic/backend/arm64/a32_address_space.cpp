@@ -157,7 +157,8 @@ static void* EmitExclusiveWriteCallTrampoline(oaknut::CodeGenerator& code, const
 
 A32AddressSpace::A32AddressSpace(const A32::UserConfig& conf)
         : AddressSpace(conf.code_cache_size)
-        , conf(conf) {
+        , conf(conf)
+        , emit_conf(MakeEmitConfig()) {
     EmitPrelude();
 }
 
@@ -395,7 +396,7 @@ void A32AddressSpace::EmitPrelude() {
     ProtectCodeMemory();
 }
 
-EmitConfig A32AddressSpace::GetEmitConfig() {
+EmitConfig A32AddressSpace::MakeEmitConfig() const {
     return EmitConfig{
         .optimizations = conf.unsafe_optimizations ? conf.optimizations : conf.optimizations & all_safe_optimizations,
 
