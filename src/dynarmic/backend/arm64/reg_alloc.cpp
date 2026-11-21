@@ -301,6 +301,21 @@ void RegAlloc::AssertAllUnlocked() const {
     ASSERT(std::all_of(spills.begin(), spills.end(), is_unlocked));
 }
 
+void RegAlloc::FinishBlock() {
+#ifndef MCL_IGNORE_ASSERTS
+    AssertAllUnlocked();
+    AssertNoMoreUses();
+#endif
+    dirty = false;
+}
+
+void RegAlloc::ResetLocations() {
+    gprs.fill({});
+    fprs.fill({});
+    flags = {};
+    spills.fill({});
+}
+
 void RegAlloc::AssertNoMoreUses() const {
     const auto is_empty = [](const auto& i) { return i.IsCompletelyEmpty(); };
     ASSERT(std::all_of(gprs.begin(), gprs.end(), is_empty));

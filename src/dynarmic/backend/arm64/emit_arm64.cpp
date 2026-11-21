@@ -284,6 +284,7 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block block, const E
     ebi.relocations.assign(ctx.relocations.begin(), ctx.relocations.end());
     ebi.block_relocations.assign(ctx.block_relocations.begin(), ctx.block_relocations.end());
     ebi.fastmem_patch_info.Assign(ctx.fastmem_patches);
+    reg_alloc.FinishBlock();
     return ebi;
 }
 

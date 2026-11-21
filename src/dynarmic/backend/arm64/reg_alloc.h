@@ -163,6 +163,15 @@ struct RegAllocBuffers {
     std::vector<std::optional<HostLoc>> location_hints;
     std::vector<u64> defined_marks;
     u64 block_count = 0;
+
+    // The location records, also kept between blocks. Every record is empty again when a block's emit
+    // finishes (RegAlloc::FinishBlock()), so the next block starts from them as they are. dirty stays set
+    // when an exception abandons a block; the next RegAlloc then resets every record.
+    std::array<HostLocInfo, 32> gprs;
+    std::array<HostLocInfo, 32> fprs;
+    HostLocInfo flags;
+    std::array<HostLocInfo, SpillCount> spills;
+    bool dirty = false;
 };
 
 class RegAlloc final {
@@ -170,7 +179,12 @@ public:
     using ArgumentInfo = std::array<Argument, IR::max_arg_count>;
 
     explicit RegAlloc(oaknut::CodeGenerator& code, FpsrManager& fpsr_manager, std::span<const int> gpr_order, std::span<const int> fpr_order, RegAllocBuffers& buffers)
-            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order}, location_hints{buffers.location_hints}, defined_marks{buffers.defined_marks}, block_mark{++buffers.block_count} {}
+            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order}, gprs{buffers.gprs}, fprs{buffers.fprs}, flags{buffers.flags}, spills{buffers.spills}, dirty{buffers.dirty}, location_hints{buffers.location_hints}, defined_marks{buffers.defined_marks}, block_mark{++buffers.block_count} {
+        if (dirty) {
+            ResetLocations();
+        }
+        dirty = true;
+    }
 
     ArgumentInfo GetArgumentInfo(IR::Inst* inst);
     bool WasValueDefined(IR::Inst* inst) const;
@@ -309,6 +323,8 @@ public:
     void UpdateAllUses();
     void AssertAllUnlocked() const;
     void AssertNoMoreUses() const;
+    // Call when the block's code is complete: its location records are empty and can be reused.
+    void FinishBlock();
 
     void EmitVerboseDebuggingOutput();
 
@@ -350,10 +366,13 @@ private:
     std::span<const int> gpr_order;
     std::span<const int> fpr_order;
 
-    std::array<HostLocInfo, 32> gprs;
-    std::array<HostLocInfo, 32> fprs;
-    HostLocInfo flags;
-    std::array<HostLocInfo, SpillCount> spills;
+    // In RegAllocBuffers, kept between blocks.
+    std::array<HostLocInfo, 32>& gprs;
+    std::array<HostLocInfo, 32>& fprs;
+    HostLocInfo& flags;
+    std::array<HostLocInfo, SpillCount>& spills;
+    bool& dirty;
+    void ResetLocations();
     // Spill slots at or above this index have held nothing in this block.
     size_t spills_used{};
 
