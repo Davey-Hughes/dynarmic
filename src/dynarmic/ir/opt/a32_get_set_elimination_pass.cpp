@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -221,7 +222,14 @@ void RegisterPass(IR::Block& block) {
         IR::Value register_value;
         std::optional<Iterator> last_set_instruction;
     };
-    std::array<ExtRegInfo, 64> ext_reg_info;
+    // Most blocks access no extended register, so the table is set up when the first access comes.
+    std::optional<std::array<ExtRegInfo, 64>> ext_reg_table;
+    const auto ext_reg_info = [&ext_reg_table](size_t index) -> ExtRegInfo& {
+        if (!ext_reg_table) {
+            ext_reg_table.emplace();
+        }
+        return (*ext_reg_table)[index];
+    };
 
     const auto do_ext_get = [](ExtValueType type, std::initializer_list<std::reference_wrapper<ExtRegInfo>> infos, Iterator get_inst) {
         if (!std::all_of(infos.begin(), infos.end(), [type](const auto& info) { return info.get().value_type == type; })) {
@@ -276,13 +284,13 @@ void RegisterPass(IR::Block& block) {
         case IR::Opcode::A32GetExtendedRegister32: {
             const A32::ExtReg reg = inst->GetArg(0).GetA32ExtRegRef();
             const size_t reg_index = A32::RegNumber(reg);
-            do_ext_get(ExtValueType::Single, {ext_reg_info[reg_index]}, inst);
+            do_ext_get(ExtValueType::Single, {ext_reg_info(reg_index)}, inst);
             break;
         }
         case IR::Opcode::A32SetExtendedRegister32: {
             const A32::ExtReg reg = inst->GetArg(0).GetA32ExtRegRef();
             const size_t reg_index = A32::RegNumber(reg);
-            do_ext_set(ExtValueType::Single, {ext_reg_info[reg_index]}, inst->GetArg(1), inst);
+            do_ext_set(ExtValueType::Single, {ext_reg_info(reg_index)}, inst->GetArg(1), inst);
             break;
         }
         case IR::Opcode::A32GetExtendedRegister64: {
@@ -290,8 +298,8 @@ void RegisterPass(IR::Block& block) {
             const size_t reg_index = A32::RegNumber(reg);
             do_ext_get(ExtValueType::Double,
                        {
-                           ext_reg_info[reg_index * 2 + 0],
-                           ext_reg_info[reg_index * 2 + 1],
+                           ext_reg_info(reg_index * 2 + 0),
+                           ext_reg_info(reg_index * 2 + 1),
                        },
                        inst);
             break;
@@ -301,8 +309,8 @@ void RegisterPass(IR::Block& block) {
             const size_t reg_index = A32::RegNumber(reg);
             do_ext_set(ExtValueType::Double,
                        {
-                           ext_reg_info[reg_index * 2 + 0],
-                           ext_reg_info[reg_index * 2 + 1],
+                           ext_reg_info(reg_index * 2 + 0),
+                           ext_reg_info(reg_index * 2 + 1),
                        },
                        inst->GetArg(1),
                        inst);
@@ -314,18 +322,18 @@ void RegisterPass(IR::Block& block) {
             if (A32::IsDoubleExtReg(reg)) {
                 do_ext_get(ExtValueType::VectorDouble,
                            {
-                               ext_reg_info[reg_index * 2 + 0],
-                               ext_reg_info[reg_index * 2 + 1],
+                               ext_reg_info(reg_index * 2 + 0),
+                               ext_reg_info(reg_index * 2 + 1),
                            },
                            inst);
             } else {
                 DEBUG_ASSERT(A32::IsQuadExtReg(reg));
                 do_ext_get(ExtValueType::VectorQuad,
                            {
-                               ext_reg_info[reg_index * 4 + 0],
-                               ext_reg_info[reg_index * 4 + 1],
-                               ext_reg_info[reg_index * 4 + 2],
-                               ext_reg_info[reg_index * 4 + 3],
+                               ext_reg_info(reg_index * 4 + 0),
+                               ext_reg_info(reg_index * 4 + 1),
+                               ext_reg_info(reg_index * 4 + 2),
+                               ext_reg_info(reg_index * 4 + 3),
                            },
                            inst);
             }
@@ -339,8 +347,8 @@ void RegisterPass(IR::Block& block) {
                 const IR::U128 stored_value = ir.VectorZeroUpper(IR::U128{inst->GetArg(1)});
                 do_ext_set(ExtValueType::VectorDouble,
                            {
-                               ext_reg_info[reg_index * 2 + 0],
-                               ext_reg_info[reg_index * 2 + 1],
+                               ext_reg_info(reg_index * 2 + 0),
+                               ext_reg_info(reg_index * 2 + 1),
                            },
                            stored_value,
                            inst);
@@ -348,10 +356,10 @@ void RegisterPass(IR::Block& block) {
                 DEBUG_ASSERT(A32::IsQuadExtReg(reg));
                 do_ext_set(ExtValueType::VectorQuad,
                            {
-                               ext_reg_info[reg_index * 4 + 0],
-                               ext_reg_info[reg_index * 4 + 1],
-                               ext_reg_info[reg_index * 4 + 2],
-                               ext_reg_info[reg_index * 4 + 3],
+                               ext_reg_info(reg_index * 4 + 0),
+                               ext_reg_info(reg_index * 4 + 1),
+                               ext_reg_info(reg_index * 4 + 2),
+                               ext_reg_info(reg_index * 4 + 3),
                            },
                            inst->GetArg(1),
                            inst);
@@ -361,7 +369,7 @@ void RegisterPass(IR::Block& block) {
         default: {
             if (inst->ReadsFromCoreRegister() || inst->WritesToCoreRegister()) {
                 reg_info = {};
-                ext_reg_info = {};
+                ext_reg_table.reset();
             }
             break;
         }
