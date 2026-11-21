@@ -680,6 +680,11 @@ void Inst::SetArg(size_t index, Value value) {
 }
 
 void Inst::Invalidate() {
+    // Nothing to release if an earlier pass has invalidated it already.
+    if (op == Opcode::Void) {
+        return;
+    }
+
     ClearArgs();
     op = Opcode::Void;
     num_args = 0;

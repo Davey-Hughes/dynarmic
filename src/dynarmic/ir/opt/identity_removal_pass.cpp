@@ -29,9 +29,12 @@ void IdentityRemovalPass(IR::Block& block) {
             }
         }
 
-        if (inst.GetOpcode() == IR::Opcode::Identity || inst.GetOpcode() == IR::Opcode::Void) {
+        if (inst.GetOpcode() == IR::Opcode::Identity) {
             iter = block.Instructions().erase(inst);
             to_invalidate.push_back(&inst);
+        } else if (inst.GetOpcode() == IR::Opcode::Void) {
+            // Invalidated by an earlier pass, so it has no arguments left to release.
+            iter = block.Instructions().erase(inst);
         } else {
             ++iter;
         }
