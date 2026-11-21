@@ -31,6 +31,9 @@ oaknut::Label EmitA32Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond co
     return pass;
 }
 
+// For a branch over the instruction that follows it
+constexpr std::ptrdiff_t skip_one_instruction = 2 * sizeof(u32);
+
 void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Terminal terminal, IR::LocationDescriptor initial_location, bool is_single_step);
 
 void EmitA32Terminal(oaknut::CodeGenerator&, EmitContext&, IR::Term::Interpret, IR::LocationDescriptor, bool) {
@@ -61,21 +64,21 @@ static void EmitSetUpperLocationDescriptor(oaknut::CodeGenerator& code, EmitCont
 void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::LinkBlock terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     EmitSetUpperLocationDescriptor(code, ctx, terminal.next, initial_location);
 
-    oaknut::Label fail;
-
     if (ctx.conf.HasOptimization(OptimizationFlag::BlockLinking) && !is_single_step) {
+        // The branch skips the block link, which is one instruction. It is given as a distance: a forward
+        // oaknut::Label allocates.
         if (ctx.conf.enable_cycle_counting) {
             code.CMP(Xticks, 0);
-            code.B(LE, fail);
-            EmitBlockLinkRelocation(code, ctx, terminal.next, BlockRelocationType::Branch);
+            code.B(LE, skip_one_instruction);
         } else {
             code.LDAR(Wscratch0, Xhalt);
-            code.CBNZ(Wscratch0, fail);
-            EmitBlockLinkRelocation(code, ctx, terminal.next, BlockRelocationType::Branch);
+            code.CBNZ(Wscratch0, skip_one_instruction);
         }
+        const CodePtr block_link = code.xptr<CodePtr>();
+        EmitBlockLinkRelocation(code, ctx, terminal.next, BlockRelocationType::Branch);
+        ASSERT(code.xptr<CodePtr>() == block_link + sizeof(u32));
     }
 
-    code.l(fail);
     code.MOV(Wscratch0, A32::LocationDescriptor{terminal.next}.PC());
     code.STR(Wscratch0, Xstate, offsetof(A32JitState, regs) + sizeof(u32) * 15);
     EmitRelocation(code, ctx, LinkTarget::ReturnToDispatcher);
@@ -95,8 +98,6 @@ void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Li
 
 void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::PopRSBHint, IR::LocationDescriptor, bool is_single_step) {
     if (ctx.conf.HasOptimization(OptimizationFlag::ReturnStackBuffer) && !is_single_step) {
-        oaknut::Label fail;
-
         code.LDR(Wscratch2, SP, offsetof(StackLayout, rsb_ptr));
         code.AND(Wscratch2, Wscratch2, RSBIndexMask);
         code.ADD(X2, SP, Xscratch2);
@@ -109,10 +110,8 @@ void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Po
         code.LDUR(X0, Xstate, offsetof(A32JitState, regs) + 15 * sizeof(u32));
 
         code.CMP(X0, Xscratch0);
-        code.B(NE, fail);
+        code.B(NE, skip_one_instruction);
         code.BR(Xscratch1);
-
-        code.l(fail);
     }
 
     EmitRelocation(code, ctx, LinkTarget::ReturnToDispatcher);
