@@ -20,10 +20,11 @@ public:
     ~Pool();
 
     Pool(const Pool&) = delete;
-    Pool(Pool&&) = delete;
-
     Pool& operator=(const Pool&) = delete;
-    Pool& operator=(Pool&&) = delete;
+
+    /// A moved-from pool holds no slab until its next Alloc().
+    Pool(Pool&&) noexcept;
+    Pool& operator=(Pool&&) noexcept;
 
     /// Returns a pointer to an `object_size`-bytes block of memory.
     void* Alloc();
@@ -33,6 +34,8 @@ private:
     // Used when an entirely new slab is needed
     // due the current one running out of usable space.
     void AllocateNewSlab();
+
+    void FreeSlabs();
 
     size_t object_size;
     size_t slab_size;

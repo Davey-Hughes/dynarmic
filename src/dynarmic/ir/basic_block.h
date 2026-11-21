@@ -13,14 +13,11 @@
 #include <mcl/container/intrusive_list.hpp>
 #include <mcl/stdint.hpp>
 
+#include "dynarmic/common/memory_pool.h"
 #include "dynarmic/ir/location_descriptor.h"
 #include "dynarmic/ir/microinstruction.h"
 #include "dynarmic/ir/terminal.h"
 #include "dynarmic/ir/value.h"
-
-namespace Dynarmic::Common {
-class Pool;
-}
 
 namespace Dynarmic::IR {
 
@@ -154,7 +151,7 @@ private:
     /// List of instructions in this block.
     InstructionList instructions;
     /// Memory pool for instruction list
-    std::unique_ptr<Common::Pool> instruction_alloc_pool;
+    Common::Pool instruction_alloc_pool;
     /// Terminal instruction of this block.
     Terminal terminal = Term::Invalid{};
 

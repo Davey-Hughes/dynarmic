@@ -41,17 +41,36 @@ Pool::Pool(size_t object_size, size_t initial_pool_size)
     AllocateNewSlab();
 }
 
-Pool::~Pool() {
-    FreeSlab(current_slab, object_size * slab_size);
+Pool::Pool(Pool&& other) noexcept
+        : object_size(other.object_size)
+        , slab_size(other.slab_size)
+        , current_slab(std::exchange(other.current_slab, nullptr))
+        , current_ptr(std::exchange(other.current_ptr, nullptr))
+        , remaining(std::exchange(other.remaining, 0))
+        , slabs(std::exchange(other.slabs, {})) {}
 
-    for (char* slab : slabs) {
-        FreeSlab(slab, object_size * slab_size);
+Pool& Pool::operator=(Pool&& other) noexcept {
+    if (this != &other) {
+        FreeSlabs();
+        object_size = other.object_size;
+        slab_size = other.slab_size;
+        current_slab = std::exchange(other.current_slab, nullptr);
+        current_ptr = std::exchange(other.current_ptr, nullptr);
+        remaining = std::exchange(other.remaining, 0);
+        slabs = std::exchange(other.slabs, {});
     }
+    return *this;
+}
+
+Pool::~Pool() {
+    FreeSlabs();
 }
 
 void* Pool::Alloc() {
     if (remaining == 0) {
-        slabs.push_back(current_slab);
+        if (current_slab != nullptr) {
+            slabs.push_back(current_slab);
+        }
         AllocateNewSlab();
     }
 
@@ -70,6 +89,16 @@ void Pool::AllocateNewSlab() {
     }
     current_ptr = current_slab;
     remaining = slab_size;
+}
+
+void Pool::FreeSlabs() {
+    if (current_slab != nullptr) {
+        FreeSlab(current_slab, object_size * slab_size);
+    }
+
+    for (char* slab : slabs) {
+        FreeSlab(slab, object_size * slab_size);
+    }
 }
 
 }  // namespace Dynarmic::Common
