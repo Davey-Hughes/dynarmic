@@ -161,7 +161,9 @@ struct HostLocInfo final {
     }
     void SetupScratchLocation();
     void SetupLocation(const IR::Inst*);
-    bool IsCompletelyEmpty() const;
+    bool IsCompletelyEmpty() const {
+        return values.empty() && !locked && !realized && !accumulated_uses && !expected_uses && !uses_this_inst;
+    }
     bool MaybeAllocatable() const;
     bool IsOneRemainingUse() const;
     void UpdateUses();
@@ -355,8 +357,19 @@ private:
     int RealizeReadWriteImpl(const IR::Value& read_value, const IR::Inst* write_value);
 
     int AllocateRegister(const std::array<HostLocInfo, 32>& regs, std::span<const int> order) const;
-    void SpillGpr(int index);
-    void SpillFpr(int index);
+    // Most registers these are called for are empty, so that is checked before the call.
+    void SpillGpr(int index) {
+        if (!gprs[index].IsCompletelyEmpty()) {
+            SpillNonEmptyGpr(index);
+        }
+    }
+    void SpillFpr(int index) {
+        if (!fprs[index].IsCompletelyEmpty()) {
+            SpillNonEmptyFpr(index);
+        }
+    }
+    void SpillNonEmptyGpr(int index);
+    void SpillNonEmptyFpr(int index);
     int FindFreeSpill() const;
 
     void LoadCopyInto(const IR::Value& value, oaknut::XReg reg);

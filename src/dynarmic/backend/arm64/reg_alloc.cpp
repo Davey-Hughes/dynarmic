@@ -102,10 +102,6 @@ void HostLocInfo::SetupLocation(const IR::Inst* value) {
     expected_uses = value->UseCount();
 }
 
-bool HostLocInfo::IsCompletelyEmpty() const {
-    return values.empty() && !locked && !realized && !accumulated_uses && !expected_uses && !uses_this_inst;
-}
-
 bool HostLocInfo::MaybeAllocatable() const {
     return !locked && !realized;
 }
@@ -537,7 +533,7 @@ int RegAlloc::AllocateRegister(const std::array<HostLocInfo, 32>& regs, std::spa
     return candidates[alloc_candidate_index++ % candidate_count];
 }
 
-void RegAlloc::SpillGpr(int index) {
+void RegAlloc::SpillNonEmptyGpr(int index) {
     ASSERT(!gprs[index].locked && !gprs[index].realized);
     if (gprs[index].values.empty()) {
         return;
@@ -550,7 +546,7 @@ void RegAlloc::SpillGpr(int index) {
     SetLocationHints(HostLoc{HostLoc::Kind::Spill, new_location_index});
 }
 
-void RegAlloc::SpillFpr(int index) {
+void RegAlloc::SpillNonEmptyFpr(int index) {
     ASSERT(!fprs[index].locked && !fprs[index].realized);
     if (fprs[index].values.empty()) {
         return;
