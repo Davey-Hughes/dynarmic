@@ -703,6 +703,7 @@ void Inst::ReplaceUsesWith(Value replacement) {
     Invalidate();
 
     op = Opcode::Identity;
+    num_args = 1;
 
     if (!replacement.IsImmediate()) {
         Use(replacement);
