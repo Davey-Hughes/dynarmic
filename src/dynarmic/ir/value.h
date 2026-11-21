@@ -131,6 +131,10 @@ public:
     bool IsZero() const;
 
 private:
+    // The identity cases of IsImmediate() and GetType(), out of line so that those two stay inlinable.
+    bool IsImmediateThroughIdentity() const;
+    Type GetTypeThroughIdentity() const;
+
     Type type;
 
     union {

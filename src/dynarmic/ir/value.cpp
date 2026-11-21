@@ -85,6 +85,14 @@ Value Value::EmptyNZCVImmediateMarker() {
     return result;
 }
 
+bool Value::IsImmediateThroughIdentity() const {
+    return inner.inst->GetArg(0).IsImmediate();
+}
+
+Type Value::GetTypeThroughIdentity() const {
+    return inner.inst->GetArg(0).GetType();
+}
+
 bool Value::IsEmpty() const {
     return type == Type::Void;
 }

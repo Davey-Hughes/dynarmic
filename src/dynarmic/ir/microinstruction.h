@@ -169,17 +169,19 @@ inline bool Value::IsIdentity() const {
 }
 
 inline bool Value::IsImmediate() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).IsImmediate();
-    return type != Type::Opaque;
+    if (type != Type::Opaque)
+        return true;
+    if (inner.inst->GetOpcode() != Opcode::Identity)
+        return false;
+    return IsImmediateThroughIdentity();
 }
 
 inline Type Value::GetType() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).GetType();
-    if (type == Type::Opaque)
+    if (type != Type::Opaque)
+        return type;
+    if (inner.inst->GetOpcode() != Opcode::Identity)
         return inner.inst->GetType();
-    return type;
+    return GetTypeThroughIdentity();
 }
 
 }  // namespace Dynarmic::IR
