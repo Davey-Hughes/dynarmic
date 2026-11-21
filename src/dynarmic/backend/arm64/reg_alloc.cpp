@@ -128,8 +128,8 @@ void HostLocInfo::UpdateUses() {
 RegAlloc::ArgumentInfo RegAlloc::GetArgumentInfo(IR::Inst* inst) {
     ArgumentInfo ret = {Argument{*this}, Argument{*this}, Argument{*this}, Argument{*this}};
     for (size_t i = 0; i < inst->NumArgs(); i++) {
-        const IR::Value arg = inst->GetArg(i);
-        ret[i].value = arg;
+        ret[i].value = inst->GetArg(i);
+        const IR::Value& arg = ret[i].value;
         if (!arg.IsImmediate() && !IsValuelessType(arg.GetType())) {
             const auto location = ValueLocation(arg.GetInst());
             ASSERT_MSG(location, "argument must already been defined");
