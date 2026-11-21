@@ -71,7 +71,10 @@ protected:
     // The info has to be the one in block_infos: block_references keeps its address.
     void Link(const EmittedBlockInfo& block_info);
     void LinkBlockLink(const CodePtr entry_point, const CodePtr target_ptr, const BlockRelocation& block_relocation);
+    // Patches the blocks that link to the target. They wait in unflushed_code for FlushCode().
     void RelinkForDescriptor(IR::LocationDescriptor target_descriptor, CodePtr target_ptr);
+    // Cache maintenance for every range in unflushed_code, with one synchronization for all of them.
+    void FlushCode();
 
     FakeCall FastmemCallback(u64 host_pc);
 
@@ -111,6 +114,8 @@ protected:
     std::deque<EmittedBlockInfo> block_infos;
     // The blocks that link to each target, each listed once (Link() adds a block's references together).
     tsl::robin_map<IR::LocationDescriptor, boost::container::small_vector<const EmittedBlockInfo*, 2>> block_references;
+
+    std::vector<std::pair<CodePtr, size_t>> unflushed_code;
 
     ExceptionHandler exception_handler;
     FastmemManager fastmem_manager;

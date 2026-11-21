@@ -93,6 +93,7 @@ void AddressSpace::InvalidateBasicBlocks(const tsl::robin_set<IR::LocationDescri
         block_entries.erase(iter);
     }
 
+    FlushCode();
     ProtectCodeMemory();
 }
 
@@ -133,7 +134,8 @@ CodePtr AddressSpace::Emit(IR::Block block) {
     Link(block_info);
     RelinkForDescriptor(block.Location(), entry_point);
 
-    mem.invalidate(reinterpret_cast<u32*>(entry_point), block_info.size);
+    unflushed_code.emplace_back(entry_point, block_info.size);
+    FlushCode();
     ProtectCodeMemory();
 
     RegisterNewBasicBlock(block, block_info);
@@ -325,8 +327,62 @@ void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor,
             }
         }
 
-        mem.invalidate(reinterpret_cast<u32*>(block_info->entry_point), block_info->size);
+        unflushed_code.emplace_back(block_info->entry_point, block_info->size);
     }
+}
+
+void AddressSpace::FlushCode() {
+    if (unflushed_code.empty()) {
+        return;
+    }
+
+#if defined(__APPLE__) || defined(_WIN32)
+    for (const auto& [ptr, size] : unflushed_code) {
+        mem.invalidate(reinterpret_cast<u32*>(ptr), size);
+    }
+#else
+    // The sequence of oaknut::CodeBlock::invalidate(), with every range in each step. The DSB and ISB that end
+    // it cost far more than cleaning and invalidating a block's lines, so a block and the blocks relinked to
+    // it share them.
+    static u64 icache_line_size = 0x10000, dcache_line_size = 0x10000;
+
+    u64 ctr;
+    __asm__ volatile("mrs %0, ctr_el0"
+                     : "=r"(ctr));
+
+    const u64 isize = icache_line_size = std::min<u64>(icache_line_size, 4 << ((ctr >> 0) & 0xf));
+    const u64 dsize = dcache_line_size = std::min<u64>(dcache_line_size, 4 << ((ctr >> 16) & 0xf));
+
+    for (const auto& [ptr, size] : unflushed_code) {
+        const u64 end = mcl::bit_cast<u64>(ptr) + size;
+        for (u64 addr = mcl::bit_cast<u64>(ptr) & ~(dsize - 1); addr < end; addr += dsize) {
+            __asm__ volatile("dc cvau, %0"
+                             :
+                             : "r"(addr)
+                             : "memory");
+        }
+    }
+    __asm__ volatile("dsb ish"
+                     :
+                     :
+                     : "memory");
+
+    for (const auto& [ptr, size] : unflushed_code) {
+        const u64 end = mcl::bit_cast<u64>(ptr) + size;
+        for (u64 addr = mcl::bit_cast<u64>(ptr) & ~(isize - 1); addr < end; addr += isize) {
+            __asm__ volatile("ic ivau, %0"
+                             :
+                             : "r"(addr)
+                             : "memory");
+        }
+    }
+    __asm__ volatile("dsb ish\nisb"
+                     :
+                     :
+                     : "memory");
+#endif
+
+    unflushed_code.clear();
 }
 
 FakeCall AddressSpace::FastmemCallback(u64 host_pc) {
