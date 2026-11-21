@@ -23,6 +23,26 @@ namespace Dynarmic::Optimization {
 
 namespace {
 
+// Whether an instruction reads or writes CPSR, and whether it reads or writes a core register, by opcode.
+// The walks below ask it of every instruction, and most instructions do neither.
+struct OpcodeTraits {
+    std::array<bool, IR::OpcodeCount> accesses_cpsr;
+    std::array<bool, IR::OpcodeCount> accesses_core_register;
+};
+
+const OpcodeTraits& GetOpcodeTraits() {
+    static const OpcodeTraits traits = [] {
+        OpcodeTraits result{};
+        for (size_t i = 0; i < IR::OpcodeCount; ++i) {
+            const IR::Inst inst{static_cast<IR::Opcode>(i)};
+            result.accesses_cpsr[i] = inst.ReadsFromCPSR() || inst.WritesToCPSR();
+            result.accesses_core_register[i] = inst.ReadsFromCoreRegister() || inst.WritesToCoreRegister();
+        }
+        return result;
+    }();
+    return traits;
+}
+
 // The value an A32GetFpscrNZCV reads, when the block's last A32SetFpscrNZCV before it gives it: empty when
 // there is none, or when FPSCR may have been written whole in between.
 IR::Value FpscrNZCVBefore(IR::Block& block, IR::Block::iterator get_inst) {
@@ -89,7 +109,14 @@ void FlagsPass(IR::Block& block, bool forward_fpscr_nzcv) {
 
     A32::IREmitter ir{block, A32::LocationDescriptor{block.Location()}, {}};
 
+    const auto& accesses_cpsr = GetOpcodeTraits().accesses_cpsr;
+
     for (auto inst = block.rbegin(); inst != block.rend(); ++inst) {
+        // Every case below is of an opcode that reads or writes CPSR.
+        if (!accesses_cpsr[static_cast<size_t>(inst->GetOpcode())]) {
+            continue;
+        }
+
         switch (inst->GetOpcode()) {
         case IR::Opcode::A32GetCFlag: {
             do_get(c_flag, inst);
@@ -205,13 +232,11 @@ void FlagsPass(IR::Block& block, bool forward_fpscr_nzcv) {
             break;
         }
         default: {
-            if (inst->ReadsFromCPSR() || inst->WritesToCPSR()) {
-                nzcvq = {};
-                nzcv = {};
-                nz = {};
-                c_flag = {};
-                ge = {};
-            }
+            nzcvq = {};
+            nzcv = {};
+            nz = {};
+            c_flag = {};
+            ge = {};
             break;
         }
         }
@@ -298,7 +323,14 @@ void RegisterPass(IR::Block& block) {
     // Location and version don't matter here.
     A32::IREmitter ir{block, A32::LocationDescriptor{block.Location()}, {}};
 
+    const auto& accesses_core_register = GetOpcodeTraits().accesses_core_register;
+
     for (auto inst = block.begin(); inst != block.end(); ++inst) {
+        // Every case below is of an opcode that reads or writes a core register.
+        if (!accesses_core_register[static_cast<size_t>(inst->GetOpcode())]) {
+            continue;
+        }
+
         switch (inst->GetOpcode()) {
         case IR::Opcode::A32GetRegister: {
             const A32::Reg reg = inst->GetArg(0).GetA32RegRef();
@@ -402,10 +434,8 @@ void RegisterPass(IR::Block& block) {
             break;
         }
         default: {
-            if (inst->ReadsFromCoreRegister() || inst->WritesToCoreRegister()) {
-                reg_info = {};
-                ext_reg_table.reset();
-            }
+            reg_info = {};
+            ext_reg_table.reset();
             break;
         }
         }
