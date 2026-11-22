@@ -129,6 +129,11 @@ public:
     Inst* FirstConstantReadCandidate() const { return first_constant_read_candidate; }
     /// The last read recorded with AddConstantReadCandidate(), or nullptr.
     Inst* LastConstantReadCandidate() const { return last_constant_read_candidate; }
+    /// Forgets the recorded reads; later passes may erase them.
+    void ClearConstantReadCandidates() {
+        first_constant_read_candidate = nullptr;
+        last_constant_read_candidate = nullptr;
+    }
 
     /// Gets a mutable reference to the instruction list for this basic block.
     InstructionList& Instructions();
