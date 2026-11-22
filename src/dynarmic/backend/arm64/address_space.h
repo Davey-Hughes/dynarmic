@@ -71,7 +71,7 @@ protected:
     // The info has to be the one in block_infos: block_references keeps its address.
     void Link(const EmittedBlockInfo& block_info);
     void LinkBlockLink(const CodePtr entry_point, const CodePtr target_ptr, const BlockRelocation& block_relocation);
-    // Patches the blocks that link to the target. They wait in unflushed_code for FlushCode().
+    // Patches the blocks that link to the target. The patched instructions wait in unflushed_code for FlushCode().
     void RelinkForDescriptor(IR::LocationDescriptor target_descriptor, CodePtr target_ptr);
     // Cache maintenance for every range in unflushed_code, with one synchronization for all of them.
     void FlushCode();

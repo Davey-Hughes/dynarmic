@@ -325,10 +325,11 @@ void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor,
         for (const auto& block_relocation : block_info->block_relocations) {
             if (block_relocation.target == target_descriptor) {
                 LinkBlockLink(block_info->entry_point, target_ptr, block_relocation);
+                // Only the patched instructions changed: one B or NOP, or the two of an ADRL.
+                const size_t patch_size = block_relocation.type == BlockRelocationType::MoveToScratch1 ? 8 : 4;
+                unflushed_code.emplace_back(block_info->entry_point + block_relocation.code_offset, patch_size);
             }
         }
-
-        unflushed_code.emplace_back(block_info->entry_point, block_info->size);
     }
 }
 
