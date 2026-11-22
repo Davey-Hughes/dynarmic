@@ -15,6 +15,7 @@ if ("A32" IN_LIST DYNARMIC_FRONTENDS)
         A32/test_arm_fast_dispatch.cpp
         A32/test_arm_condb_fold.cpp
         A32/test_arm_instructions.cpp
+        A32/test_constant_memory_reads.cpp
         A32/test_coprocessor.cpp
         A32/test_decoder_buckets.cpp
         A32/test_svc.cpp

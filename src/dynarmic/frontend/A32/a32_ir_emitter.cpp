@@ -15,6 +15,18 @@ namespace Dynarmic::A32 {
 
 using Opcode = IR::Opcode;
 
+namespace {
+
+// Before constant propagation a read's address can only be an immediate if it was one when the read
+// was emitted, or if it comes from a register read that A32GetSetElimination() may replace.
+void RecordIfConstantReadCandidate(IR::Block& block, const IR::U32& vaddr, const IR::Value& read) {
+    if (vaddr.IsImmediate() || vaddr.GetInst()->GetOpcode() == Opcode::A32GetRegister) {
+        block.AddConstantReadCandidate(read.GetInst());
+    }
+}
+
+}  // namespace
+
 size_t IREmitter::ArchVersion() const {
     switch (arch_version) {
     case ArchVersion::v3:
@@ -241,21 +253,26 @@ IR::UAny IREmitter::ReadMemory(size_t bitsize, const IR::U32& vaddr, IR::AccType
 }
 
 IR::U8 IREmitter::ReadMemory8(const IR::U32& vaddr, IR::AccType acc_type) {
-    return Inst<IR::U8>(Opcode::A32ReadMemory8, ImmCurrentLocationDescriptor(), vaddr, IR::Value{acc_type});
+    const auto value = Inst<IR::U8>(Opcode::A32ReadMemory8, ImmCurrentLocationDescriptor(), vaddr, IR::Value{acc_type});
+    RecordIfConstantReadCandidate(block, vaddr, value);
+    return value;
 }
 
 IR::U16 IREmitter::ReadMemory16(const IR::U32& vaddr, IR::AccType acc_type) {
     const auto value = Inst<IR::U16>(Opcode::A32ReadMemory16, ImmCurrentLocationDescriptor(), vaddr, IR::Value{acc_type});
+    RecordIfConstantReadCandidate(block, vaddr, value);
     return current_location.EFlag() ? ByteReverseHalf(value) : value;
 }
 
 IR::U32 IREmitter::ReadMemory32(const IR::U32& vaddr, IR::AccType acc_type) {
     const auto value = Inst<IR::U32>(Opcode::A32ReadMemory32, ImmCurrentLocationDescriptor(), vaddr, IR::Value{acc_type});
+    RecordIfConstantReadCandidate(block, vaddr, value);
     return current_location.EFlag() ? ByteReverseWord(value) : value;
 }
 
 IR::U64 IREmitter::ReadMemory64(const IR::U32& vaddr, IR::AccType acc_type) {
     const auto value = Inst<IR::U64>(Opcode::A32ReadMemory64, ImmCurrentLocationDescriptor(), vaddr, IR::Value{acc_type});
+    RecordIfConstantReadCandidate(block, vaddr, value);
     return current_location.EFlag() ? ByteReverseDual(value) : value;
 }
 

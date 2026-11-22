@@ -117,6 +117,19 @@ public:
     /// Gets an immutable reference to the condition failed cycle count.
     const size_t& ConditionFailedCycleCount() const;
 
+    /// Records an A32 memory read whose address may be an immediate by the time
+    /// A32ConstantMemoryReads() runs. Reads are recorded in block order.
+    void AddConstantReadCandidate(Inst* read) {
+        if (!first_constant_read_candidate) {
+            first_constant_read_candidate = read;
+        }
+        last_constant_read_candidate = read;
+    }
+    /// The first read recorded with AddConstantReadCandidate(), or nullptr.
+    Inst* FirstConstantReadCandidate() const { return first_constant_read_candidate; }
+    /// The last read recorded with AddConstantReadCandidate(), or nullptr.
+    Inst* LastConstantReadCandidate() const { return last_constant_read_candidate; }
+
     /// Gets a mutable reference to the instruction list for this basic block.
     InstructionList& Instructions();
     /// Gets an immutable reference to the instruction list for this basic block.
@@ -157,6 +170,9 @@ private:
 
     /// Number of cycles this block takes to execute.
     size_t cycle_count = 0;
+
+    Inst* first_constant_read_candidate = nullptr;
+    Inst* last_constant_read_candidate = nullptr;
 };
 
 /// Returns a string representation of the contents of block. Intended for debugging.

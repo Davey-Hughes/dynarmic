@@ -11,7 +11,15 @@
 namespace Dynarmic::Optimization {
 
 void A32ConstantMemoryReads(IR::Block& block, A32::UserCallbacks* cb) {
-    for (auto& inst : block) {
+    // Reads the frontend did not record with AddConstantReadCandidate() cannot have an immediate
+    // address yet, so only the instructions from the first recorded read to the last are visited.
+    IR::Inst* const last = block.LastConstantReadCandidate();
+    if (!last) {
+        return;
+    }
+
+    for (auto iter = IR::Block::iterator{block.FirstConstantReadCandidate()};; ++iter) {
+        IR::Inst& inst = *iter;
         switch (inst.GetOpcode()) {
         case IR::Opcode::A32ReadMemory8: {
             if (!inst.AreAllArgsImmediates()) {
@@ -62,6 +70,10 @@ void A32ConstantMemoryReads(IR::Block& block, A32::UserCallbacks* cb) {
             break;
         }
         default:
+            break;
+        }
+
+        if (&inst == last) {
             break;
         }
     }
