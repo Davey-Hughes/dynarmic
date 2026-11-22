@@ -21,13 +21,11 @@ namespace Dynarmic::Backend::Arm64 {
 
 using namespace oaknut::util;
 
-oaknut::Label EmitA64Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond cond) {
-    oaknut::Label pass;
+CondBranch EmitA64Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond cond) {
     // TODO: Flags in host flags
     code.LDR(Wscratch0, Xstate, offsetof(A64JitState, cpsr_nzcv));
     code.MSR(oaknut::SystemReg::NZCV, Xscratch0);
-    code.B(static_cast<oaknut::Cond>(cond), pass);
-    return pass;
+    return EmitCondBranch(code, cond);
 }
 
 void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Terminal terminal, IR::LocationDescriptor initial_location, bool is_single_step);
@@ -108,9 +106,9 @@ void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Fa
 }
 
 void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::If terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
-    oaknut::Label pass = EmitA64Cond(code, ctx, terminal.if_);
+    const CondBranch pass = EmitA64Cond(code, ctx, terminal.if_);
     EmitA64Terminal(code, ctx, terminal.else_, initial_location, is_single_step);
-    code.l(pass);
+    pass.Bind(code);
     EmitA64Terminal(code, ctx, terminal.then_, initial_location, is_single_step);
 }
 

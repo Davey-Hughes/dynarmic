@@ -22,13 +22,11 @@ namespace Dynarmic::Backend::Arm64 {
 
 using namespace oaknut::util;
 
-oaknut::Label EmitA32Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond cond) {
-    oaknut::Label pass;
+CondBranch EmitA32Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond cond) {
     // TODO: Flags in host flags
     code.LDR(Wscratch0, Xstate, offsetof(A32JitState, cpsr_nzcv));
     code.MSR(oaknut::SystemReg::NZCV, Xscratch0);
-    code.B(static_cast<oaknut::Cond>(cond), pass);
-    return pass;
+    return EmitCondBranch(code, cond);
 }
 
 // For a branch over the instruction that follows it
@@ -124,9 +122,9 @@ void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Fa
 }
 
 void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::Term::If& terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
-    oaknut::Label pass = EmitA32Cond(code, ctx, terminal.if_);
+    const CondBranch pass = EmitA32Cond(code, ctx, terminal.if_);
     EmitA32Terminal(code, ctx, terminal.else_, initial_location, is_single_step);
-    code.l(pass);
+    pass.Bind(code);
     EmitA32Terminal(code, ctx, terminal.then_, initial_location, is_single_step);
 }
 

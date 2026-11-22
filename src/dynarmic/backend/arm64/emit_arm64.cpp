@@ -218,13 +218,12 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block& block, const 
         ASSERT(!ctx.block.HasConditionFailedLocation());
     } else {
         ASSERT(ctx.block.HasConditionFailedLocation());
-        oaknut::Label pass;
 
-        pass = conf.emit_cond(code, ctx, ctx.block.GetCondition());
+        const CondBranch pass = conf.emit_cond(code, ctx, ctx.block.GetCondition());
         EmitAddCycles(code, ctx, ctx.block.ConditionFailedCycleCount());
         conf.emit_condition_failed_terminal(code, ctx);
 
-        code.l(pass);
+        pass.Bind(code);
     }
 
     for (auto iter = block.begin(); iter != block.end(); ++iter) {
@@ -289,6 +288,19 @@ EmittedBlockInfo EmitArm64(oaknut::CodeGenerator& code, IR::Block& block, const 
 void EmitRelocation(oaknut::CodeGenerator& code, EmitContext& ctx, LinkTarget link_target) {
     ctx.relocations.emplace_back(Relocation{code.xptr<CodePtr>() - ctx.ebi.entry_point, link_target});
     code.NOP();
+}
+
+CondBranch EmitCondBranch(oaknut::CodeGenerator& code, IR::Cond cond) {
+    const CondBranch branch{code.xptr<CodePtr>(), cond};
+    code.NOP();  // Bind() writes the branch here
+    return branch;
+}
+
+void CondBranch::Bind(oaknut::CodeGenerator& code) const {
+    const CodePtr target = code.xptr<CodePtr>();
+    code.set_xptr(reinterpret_cast<u32*>(ptr));
+    code.B(static_cast<oaknut::Cond>(cond), target - ptr);
+    code.set_xptr(reinterpret_cast<u32*>(target));
 }
 
 void EmitBlockLinkRelocation(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::LocationDescriptor& descriptor, BlockRelocationType type) {

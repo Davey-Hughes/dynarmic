@@ -43,6 +43,15 @@ struct EmitContext;
 
 using CodePtr = std::byte*;
 
+// A conditional branch to code that is emitted later. Bind() points it at the current position; a forward
+// oaknut::Label would allocate.
+struct CondBranch {
+    CodePtr ptr;
+    IR::Cond cond;
+
+    void Bind(oaknut::CodeGenerator& code) const;
+};
+
 enum class LinkTarget {
     ReturnToDispatcher,
     ReturnFromRunCode,
@@ -192,7 +201,7 @@ struct EmitConfig {
 
     // Frontend specific callbacks
     FP::FPCR (*descriptor_to_fpcr)(const IR::LocationDescriptor& descriptor);
-    oaknut::Label (*emit_cond)(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Cond cond);
+    CondBranch (*emit_cond)(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Cond cond);
     void (*emit_condition_failed_terminal)(oaknut::CodeGenerator& code, EmitContext& ctx);
     void (*emit_terminal)(oaknut::CodeGenerator& code, EmitContext& ctx);
     void (*emit_check_memory_abort)(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst, oaknut::Label& end);
@@ -215,8 +224,9 @@ template<IR::Opcode op>
 void EmitIR(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst);
 void EmitRelocation(oaknut::CodeGenerator& code, EmitContext& ctx, LinkTarget link_target);
 void EmitBlockLinkRelocation(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::LocationDescriptor& descriptor, BlockRelocationType type);
-oaknut::Label EmitA32Cond(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Cond cond);
-oaknut::Label EmitA64Cond(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Cond cond);
+CondBranch EmitCondBranch(oaknut::CodeGenerator& code, IR::Cond cond);
+CondBranch EmitA32Cond(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Cond cond);
+CondBranch EmitA64Cond(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Cond cond);
 void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx);
 void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx);
 void EmitA32ConditionFailedTerminal(oaknut::CodeGenerator& code, EmitContext& ctx);
