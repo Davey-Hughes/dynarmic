@@ -19,18 +19,11 @@ constexpr std::size_t node_size = std::max({sizeof(If), sizeof(CheckBit), sizeof
 // live at once. Freed nodes past this many go back to the heap.
 constexpr std::size_t max_free_nodes = 64;
 
+// Trivially destructible on purpose: a thread_local with a destructor keeps a dlopen'ed library loaded
+// while the thread lives. A thread that exits leaks its free nodes (at most max_free_nodes).
 struct FreeList {
     void* head = nullptr;
     std::size_t count = 0;
-
-    ~FreeList() {
-        while (head) {
-            void* const next = *static_cast<void**>(head);
-            std::free(head);
-            head = next;
-        }
-        count = 0;
-    }
 };
 
 thread_local FreeList free_list;
