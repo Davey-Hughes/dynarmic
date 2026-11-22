@@ -44,6 +44,7 @@ void A64MergeInterpretBlocksPass(IR::Block& block, A64::UserCallbacks* cb);
 void ConstantPropagation(IR::Block& block);
 void DeadCodeElimination(IR::Block& block);
 void IdentityRemovalPass(IR::Block& block);
+void DeadCodeEliminationThenIdentityRemoval(IR::Block& block);
 void VerificationPass(const IR::Block& block);
 void NamingPass(IR::Block& block);
 

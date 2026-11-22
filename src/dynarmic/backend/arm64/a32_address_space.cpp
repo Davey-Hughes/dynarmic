@@ -174,9 +174,10 @@ IR::Block A32AddressSpace::GenerateIR(IR::LocationDescriptor descriptor) const {
     if (conf.HasOptimization(OptimizationFlag::ConstProp)) {
         Optimization::A32ConstantMemoryReads(ir_block, conf.callbacks);
         Optimization::ConstantPropagation(ir_block);
-        Optimization::DeadCodeElimination(ir_block);
+        Optimization::DeadCodeEliminationThenIdentityRemoval(ir_block);
+    } else {
+        Optimization::IdentityRemovalPass(ir_block);
     }
-    Optimization::IdentityRemovalPass(ir_block);
 #ifndef MCL_IGNORE_ASSERTS
     Optimization::VerificationPass(ir_block);
 #endif
