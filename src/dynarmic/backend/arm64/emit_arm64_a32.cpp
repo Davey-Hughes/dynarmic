@@ -34,7 +34,7 @@ oaknut::Label EmitA32Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond co
 // For a branch over the instruction that follows it
 constexpr std::ptrdiff_t skip_one_instruction = 2 * sizeof(u32);
 
-void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Terminal terminal, IR::LocationDescriptor initial_location, bool is_single_step);
+void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::Term::Terminal& terminal, IR::LocationDescriptor initial_location, bool is_single_step);
 
 void EmitA32Terminal(oaknut::CodeGenerator&, EmitContext&, IR::Term::Interpret, IR::LocationDescriptor, bool) {
     ASSERT_FALSE("Interpret should never be emitted.");
@@ -123,14 +123,14 @@ void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Fa
     // TODO: Implement FastDispatchHint optimization
 }
 
-void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::If terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::Term::If& terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     oaknut::Label pass = EmitA32Cond(code, ctx, terminal.if_);
     EmitA32Terminal(code, ctx, terminal.else_, initial_location, is_single_step);
     code.l(pass);
     EmitA32Terminal(code, ctx, terminal.then_, initial_location, is_single_step);
 }
 
-void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::CheckBit terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::Term::CheckBit& terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     oaknut::Label fail;
     code.LDRB(Wscratch0, SP, offsetof(StackLayout, check_bit));
     code.CBZ(Wscratch0, fail);
@@ -139,7 +139,7 @@ void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Ch
     EmitA32Terminal(code, ctx, terminal.else_, initial_location, is_single_step);
 }
 
-void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::CheckHalt terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::Term::CheckHalt& terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     oaknut::Label fail;
     code.LDAR(Wscratch0, Xhalt);
     code.CBNZ(Wscratch0, fail);
@@ -148,7 +148,7 @@ void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Ch
     EmitRelocation(code, ctx, LinkTarget::ReturnToDispatcher);
 }
 
-void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Terminal terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+void EmitA32Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, const IR::Term::Terminal& terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     boost::apply_visitor([&](const auto& t) { EmitA32Terminal(code, ctx, t, initial_location, is_single_step); }, terminal);
 }
 
