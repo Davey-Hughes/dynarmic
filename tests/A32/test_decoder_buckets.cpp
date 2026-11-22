@@ -10,6 +10,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "dynarmic/frontend/A32/decoder/arm.h"
+#include "dynarmic/frontend/A32/decoder/arm_combined.h"
 #include "dynarmic/frontend/A32/decoder/asimd.h"
 #include "dynarmic/frontend/A32/decoder/vfp.h"
 #include "dynarmic/frontend/A32/translate/impl/a32_translate_impl.h"
@@ -120,4 +122,36 @@ TEST_CASE("bucketed VFP/ASIMD decode matches linear search", "[decoder]") {
     CHECK(differing == 0);
     CHECK(vfp_hits > 0);
     CHECK(asimd_hits > 0);
+}
+
+TEST_CASE("combined ARM decode matches DecodeVFP, DecodeASIMD then DecodeArm", "[decoder]") {
+    const auto table = A32::BuildArmCombinedDecodeTable<V>();
+    REQUIRE(table.entries.size() == table.names.size());
+
+    size_t hits = 0;
+    size_t differing = 0;
+    ForEachSweepWord([&](u32 word) {
+        Match want{};
+        if (const auto vfp = A32::DecodeVFP<V>(word)) {
+            want = ToMatch(&vfp->get());
+        } else if (const auto asimd = A32::DecodeASIMD<V>(word)) {
+            want = ToMatch(&asimd->get());
+        } else if (const auto arm = A32::DecodeArm<V>(word)) {
+            want = ToMatch(&arm->get());
+        }
+
+        const auto& entry = table.Decode(word);
+        const char* const name = table.names[&entry - table.entries.data()];
+        const Match got = name ? Match{name, entry.mask, entry.expected} : Match{};
+
+        hits += want.name != nullptr;
+        if (!(got == want)) {
+            if (++differing <= 8) {
+                UNSCOPED_INFO("word " << std::hex << word);
+            }
+        }
+    });
+
+    CHECK(differing == 0);
+    CHECK(hits > 0);
 }

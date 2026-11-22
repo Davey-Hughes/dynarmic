@@ -7,9 +7,7 @@
 
 #include "dynarmic/frontend/A32/a32_location_descriptor.h"
 #include "dynarmic/frontend/A32/a32_types.h"
-#include "dynarmic/frontend/A32/decoder/arm.h"
-#include "dynarmic/frontend/A32/decoder/asimd.h"
-#include "dynarmic/frontend/A32/decoder/vfp.h"
+#include "dynarmic/frontend/A32/decoder/arm_combined.h"
 #include "dynarmic/frontend/A32/translate/a32_translate.h"
 #include "dynarmic/frontend/A32/translate/conditional_state.h"
 #include "dynarmic/frontend/A32/translate/impl/a32_translate_impl.h"
@@ -24,6 +22,7 @@ IR::Block TranslateArm(LocationDescriptor descriptor, TranslateCallbacks* tcb, c
 
     IR::Block block{descriptor};
     TranslatorVisitor visitor{block, descriptor, options};
+    const auto& decode_table = GetArmCombinedDecodeTable<TranslatorVisitor>();
 
     bool should_continue = true;
     do {
@@ -41,15 +40,7 @@ IR::Block TranslateArm(LocationDescriptor descriptor, TranslateCallbacks* tcb, c
             tcb->PreCodeTranslationHook(false, arm_pc, visitor.ir);
             ticks_for_instruction = tcb->GetTicksForCode(false, arm_pc, *arm_instruction);
 
-            if (const auto vfp_decoder = DecodeVFP<TranslatorVisitor>(*arm_instruction)) {
-                should_continue = vfp_decoder->get().call(visitor, *arm_instruction);
-            } else if (const auto asimd_decoder = DecodeASIMD<TranslatorVisitor>(*arm_instruction)) {
-                should_continue = asimd_decoder->get().call(visitor, *arm_instruction);
-            } else if (const auto decoder = DecodeArm<TranslatorVisitor>(*arm_instruction)) {
-                should_continue = decoder->get().call(visitor, *arm_instruction);
-            } else {
-                should_continue = visitor.arm_UDF();
-            }
+            should_continue = decode_table.Decode(*arm_instruction).call(visitor, *arm_instruction);
         } else {
             visitor.current_instruction_size = 4;
 
@@ -92,15 +83,7 @@ bool TranslateSingleArmInstruction(IR::Block& block, LocationDescriptor descript
 
     const u64 ticks_for_instruction = 1;
 
-    if (const auto vfp_decoder = DecodeVFP<TranslatorVisitor>(arm_instruction)) {
-        should_continue = vfp_decoder->get().call(visitor, arm_instruction);
-    } else if (const auto asimd_decoder = DecodeASIMD<TranslatorVisitor>(arm_instruction)) {
-        should_continue = asimd_decoder->get().call(visitor, arm_instruction);
-    } else if (const auto decoder = DecodeArm<TranslatorVisitor>(arm_instruction)) {
-        should_continue = decoder->get().call(visitor, arm_instruction);
-    } else {
-        should_continue = visitor.arm_UDF();
-    }
+    should_continue = GetArmCombinedDecodeTable<TranslatorVisitor>().Decode(arm_instruction).call(visitor, arm_instruction);
 
     // TODO: Feedback resulting cond status to caller somehow.
 

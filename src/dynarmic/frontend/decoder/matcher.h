@@ -73,4 +73,42 @@ private:
     handler_function fn;
 };
 
+/**
+ * A Matcher whose handler is a plain function, which extracts the instruction's fields with
+ * constant masks and shifts and calls the visitor's member function directly.
+ */
+template<typename Visitor, typename OpcodeType>
+struct DirectMatcher {
+    using opcode_type = OpcodeType;
+    using visitor_type = Visitor;
+    using handler_return_type = typename Visitor::instruction_return_type;
+    using handler_function = handler_return_type (*)(Visitor&, opcode_type);
+
+    const char* name;
+    opcode_type mask;
+    opcode_type expected;
+    handler_function fn;
+
+    const char* GetName() const {
+        return name;
+    }
+
+    opcode_type GetMask() const {
+        return mask;
+    }
+
+    opcode_type GetExpected() const {
+        return expected;
+    }
+
+    bool Matches(opcode_type instruction) const {
+        return (instruction & mask) == expected;
+    }
+
+    handler_return_type call(Visitor& v, opcode_type instruction) const {
+        ASSERT(Matches(instruction));
+        return fn(v, instruction);
+    }
+};
+
 }  // namespace Dynarmic::Decoder

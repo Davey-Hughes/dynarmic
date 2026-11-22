@@ -24,16 +24,9 @@ namespace Dynarmic::A32 {
 template<typename Visitor>
 using ASIMDMatcher = Decoder::Matcher<Visitor, u32>;
 
-template<typename V>
-std::vector<ASIMDMatcher<V>> GetASIMDDecodeTable() {
-    std::vector<ASIMDMatcher<V>> table = {
-
-#define INST(fn, name, bitstring) DYNARMIC_DECODER_GET_MATCHER(ASIMDMatcher, fn, name, Decoder::detail::StringToArray<32>(bitstring)),
-#include "./asimd.inc"
-#undef INST
-
-    };
-
+/// Puts the matchers of asimd.inc in the order DecodeASIMD() tries them.
+template<typename MatcherList>
+void SortASIMDMatchers(MatcherList& table) {
     // Exceptions to the rule of thumb.
     const std::set<std::string> comes_first{
         "VBIC, VMOV, VMVN, VORR (immediate)",
@@ -63,7 +56,19 @@ std::vector<ASIMDMatcher<V>> GetASIMDDecodeTable() {
     std::stable_sort(sort_begin, sort_end, [](const auto& matcher1, const auto& matcher2) {
         return mcl::bit::count_ones(matcher1.GetMask()) > mcl::bit::count_ones(matcher2.GetMask());
     });
+}
 
+template<typename V>
+std::vector<ASIMDMatcher<V>> GetASIMDDecodeTable() {
+    std::vector<ASIMDMatcher<V>> table = {
+
+#define INST(fn, name, bitstring) DYNARMIC_DECODER_GET_MATCHER(ASIMDMatcher, fn, name, Decoder::detail::StringToArray<32>(bitstring)),
+#include "./asimd.inc"
+#undef INST
+
+    };
+
+    SortASIMDMatchers(table);
     return table;
 }
 

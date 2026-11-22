@@ -106,6 +106,7 @@ if ("A32" IN_LIST DYNARMIC_FRONTENDS)
         frontend/A32/a32_location_descriptor.cpp
         frontend/A32/a32_location_descriptor.h
         frontend/A32/decoder/arm.h
+        frontend/A32/decoder/arm_combined.h
         frontend/A32/decoder/arm.inc
         frontend/A32/decoder/asimd.h
         frontend/A32/decoder/asimd.inc

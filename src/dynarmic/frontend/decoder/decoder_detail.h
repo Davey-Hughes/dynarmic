@@ -8,10 +8,14 @@
 #include <algorithm>
 #include <array>
 #include <tuple>
+#include <type_traits>
+#include <utility>
 
 #include <mcl/assert.hpp>
 #include <mcl/bitsizeof.hpp>
 #include <mcl/type_traits/function_info.hpp>
+
+#include "dynarmic/frontend/decoder/matcher.h"
 
 namespace Dynarmic::Decoder {
 namespace detail {
@@ -182,9 +186,42 @@ struct detail {
         const auto proxy_fn = VisitorCaller<FnT>::Make(Iota(), fn, arg_masks, arg_shifts);
         return MatcherT(name, mask, expect, proxy_fn);
     }
+
+    template<typename FnT>
+    struct DirectCaller;
+
+    template<typename Visitor, typename... Args, typename CallRetT>
+    struct DirectCaller<CallRetT (Visitor::*)(Args...)> {
+        template<auto bitstring, auto fn, size_t... iota>
+        static CallRetT Call(Visitor& v, opcode_type instruction, std::integer_sequence<size_t, iota...>) {
+            static_assert(std::is_same_v<visitor_type, Visitor>, "Member function is not from Matcher's Visitor");
+            [[maybe_unused]] constexpr auto arg_masks = std::get<0>(GetArgInfo<sizeof...(iota)>(bitstring));
+            [[maybe_unused]] constexpr auto arg_shifts = std::get<1>(GetArgInfo<sizeof...(iota)>(bitstring));
+            (void)instruction;
+            return (v.*fn)(static_cast<Args>((instruction & arg_masks[iota]) >> arg_shifts[iota])...);
+        }
+    };
+
+    template<auto bitstring, auto fn>
+    static typename MatcherT::handler_return_type CallDirect(visitor_type& v, opcode_type instruction) {
+        using Iota = std::make_index_sequence<mcl::parameter_count_v<decltype(fn)>>;
+        return DirectCaller<decltype(fn)>::template Call<bitstring, fn>(v, instruction, Iota());
+    }
+
+    /**
+     * Creates a DirectMatcher for bitstring: the same instructions and arguments as
+     * GetMatcher<bitstring>(fn, name), without the std::function.
+     */
+    template<auto bitstring, auto fn>
+    static auto GetDirectMatcher(const char* const name) {
+        constexpr auto mask = std::get<0>(GetMaskAndExpect(bitstring));
+        constexpr auto expect = std::get<1>(GetMaskAndExpect(bitstring));
+        return DirectMatcher<visitor_type, opcode_type>{name, mask, expect, &CallDirect<bitstring, fn>};
+    }
 };
 
 #define DYNARMIC_DECODER_GET_MATCHER(MatcherT, fn, name, bitstring) Decoder::detail::detail<MatcherT<V>>::template GetMatcher<bitstring>(&V::fn, name)
+#define DYNARMIC_DECODER_GET_DIRECT_MATCHER(MatcherT, fn, name, bitstring) Decoder::detail::detail<MatcherT<V>>::template GetDirectMatcher<bitstring, &V::fn>(name)
 
 }  // namespace detail
 }  // namespace Dynarmic::Decoder

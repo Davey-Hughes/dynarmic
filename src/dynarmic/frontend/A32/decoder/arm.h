@@ -32,6 +32,15 @@ inline size_t ToFastLookupIndexArm(u32 instruction) {
 }
 }  // namespace detail
 
+/// Puts the matchers of arm.inc in the order DecodeArm() tries them.
+template<typename MatcherList>
+void SortArmMatchers(MatcherList& list) {
+    // If a matcher has more bits in its mask it is more specific, so it should come first.
+    std::stable_sort(list.begin(), list.end(), [](const auto& matcher1, const auto& matcher2) {
+        return mcl::bit::count_ones(matcher1.GetMask()) > mcl::bit::count_ones(matcher2.GetMask());
+    });
+}
+
 template<typename V>
 ArmDecodeTable<V> GetArmDecodeTable() {
     std::vector<ArmMatcher<V>> list = {
@@ -42,10 +51,7 @@ ArmDecodeTable<V> GetArmDecodeTable() {
 
     };
 
-    // If a matcher has more bits in its mask it is more specific, so it should come first.
-    std::stable_sort(list.begin(), list.end(), [](const auto& matcher1, const auto& matcher2) {
-        return mcl::bit::count_ones(matcher1.GetMask()) > mcl::bit::count_ones(matcher2.GetMask());
-    });
+    SortArmMatchers(list);
 
     ArmDecodeTable<V> table{};
     for (size_t i = 0; i < table.size(); ++i) {
