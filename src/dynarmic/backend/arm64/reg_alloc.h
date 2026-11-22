@@ -169,12 +169,19 @@ struct HostLocInfo final {
     void UpdateUses();
 };
 
+// Where a value is. RegAlloc rewrites the record whenever the value is placed or moved, so a record
+// that holds the current block's number is exact until the value's last use.
+struct ValueLocationRecord {
+    u64 block_mark = 0;
+    HostLoc location{};
+};
+
 // Per-value tables RegAlloc fills for each block, indexed by IR::Inst::GetName(). The owner keeps
 // them between blocks so that their storage is reused instead of allocated again for every block.
-// Neither is cleared between blocks: location hints are checked before use, and a defined mark only
-// counts if it holds the current block's number.
+// Neither is cleared between blocks: a location record or a defined mark only counts if it holds the
+// current block's number.
 struct RegAllocBuffers {
-    std::vector<std::optional<HostLoc>> location_hints;
+    std::vector<ValueLocationRecord> value_locations;
     std::vector<u64> defined_marks;
     u64 block_count = 0;
 
@@ -193,7 +200,7 @@ public:
     using ArgumentInfo = std::array<Argument, IR::max_arg_count>;
 
     explicit RegAlloc(oaknut::CodeGenerator& code, FpsrManager& fpsr_manager, std::span<const int> gpr_order, std::span<const int> fpr_order, RegAllocBuffers& buffers)
-            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order}, gprs{buffers.gprs}, fprs{buffers.fprs}, flags{buffers.flags}, spills{buffers.spills}, dirty{buffers.dirty}, location_hints{buffers.location_hints}, defined_marks{buffers.defined_marks}, block_mark{++buffers.block_count} {
+            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order}, gprs{buffers.gprs}, fprs{buffers.fprs}, flags{buffers.flags}, spills{buffers.spills}, dirty{buffers.dirty}, value_locations{buffers.value_locations}, defined_marks{buffers.defined_marks}, block_mark{++buffers.block_count} {
         if (dirty) {
             ResetLocations();
         }
@@ -377,11 +384,22 @@ private:
 
     void AddToLocationOf(IR::Inst* inst, const IR::Inst* existing);
 
-    std::optional<HostLoc> ValueLocation(const IR::Inst* value) const;
+    // Values without a name have no record and are searched for.
+    std::optional<HostLoc> ValueLocation(const IR::Inst* value) const {
+        const unsigned name = value->GetName();
+        if (name < value_locations.size() && value_locations[name].block_mark == block_mark) {
+#ifndef MCL_IGNORE_ASSERTS
+            ASSERT(ValueInfo(value_locations[name].location).Contains(value));
+#endif
+            return value_locations[name].location;
+        }
+        return FindValueLocation(value);
+    }
     std::optional<HostLoc> FindValueLocation(const IR::Inst* value) const;
     void MarkDefined(const IR::Inst* value);
-    void SetLocationHint(const IR::Inst* value, HostLoc host_loc) const;
-    void SetLocationHints(HostLoc host_loc) const;
+    void SetValueLocation(const IR::Inst* value, HostLoc host_loc);
+    // Records host_loc as the location of every value it holds.
+    void SetValueLocations(HostLoc host_loc);
     const HostLocInfo& ValueInfo(HostLoc host_loc) const {
         switch (host_loc.kind) {
         case HostLoc::Kind::Gpr:
@@ -432,9 +450,8 @@ private:
     u64 touched_spills = 0;
     void MarkTouched(const HostLocInfo& info);
 
-    // Last known location of each value, indexed by IR::Inst::GetName(). Only a hint:
-    // ValueLocation() checks that the location still holds the value before using it.
-    std::vector<std::optional<HostLoc>>& location_hints;
+    // Location of each named value defined in this block, indexed by IR::Inst::GetName().
+    std::vector<ValueLocationRecord>& value_locations;
 
     mutable size_t alloc_candidate_index{};
 

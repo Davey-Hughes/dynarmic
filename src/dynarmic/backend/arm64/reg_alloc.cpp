@@ -234,7 +234,7 @@ void RegAlloc::AddToLocationOf(IR::Inst* inst, const IR::Inst* existing) {
     info.values.push_back(inst);
     info.expected_uses += inst->UseCount();
     MarkTouched(info);
-    SetLocationHint(inst, *location);
+    SetValueLocation(inst, *location);
 }
 
 void RegAlloc::DefineAsRegister(IR::Inst* inst, oaknut::Reg reg) {
@@ -248,7 +248,7 @@ void RegAlloc::DefineAsRegister(IR::Inst* inst, oaknut::Reg reg) {
     info.values.push_back(inst);
     info.expected_uses += inst->UseCount();
     MarkTouched(info);
-    SetLocationHint(inst, HostLoc{reg.is_vector() ? HostLoc::Kind::Fpr : HostLoc::Kind::Gpr, reg.index()});
+    SetValueLocation(inst, HostLoc{reg.is_vector() ? HostLoc::Kind::Fpr : HostLoc::Kind::Gpr, reg.index()});
 }
 
 void RegAlloc::MarkTouched(const HostLocInfo& info) {
@@ -416,7 +416,7 @@ int RegAlloc::RealizeReadImpl(const IR::Value& value) {
         gprs[new_location_index] = std::exchange(ValueInfo(*current_location), {});
         gprs[new_location_index].realized = true;
         MarkTouched(gprs[new_location_index]);
-        SetLocationHints(HostLoc{HostLoc::Kind::Gpr, new_location_index});
+        SetValueLocations(HostLoc{HostLoc::Kind::Gpr, new_location_index});
         return new_location_index;
     } else if constexpr (required_kind == HostLoc::Kind::Fpr) {
         const int new_location_index = AllocateRegister(fprs, fpr_order);
@@ -440,7 +440,7 @@ int RegAlloc::RealizeReadImpl(const IR::Value& value) {
         fprs[new_location_index] = std::exchange(ValueInfo(*current_location), {});
         fprs[new_location_index].realized = true;
         MarkTouched(fprs[new_location_index]);
-        SetLocationHints(HostLoc{HostLoc::Kind::Fpr, new_location_index});
+        SetValueLocations(HostLoc{HostLoc::Kind::Fpr, new_location_index});
         return new_location_index;
     } else if constexpr (required_kind == HostLoc::Kind::Flags) {
         ASSERT_FALSE("A simple read from flags is likely a logic error.");
@@ -462,20 +462,20 @@ int RegAlloc::RealizeWriteImpl(const IR::Inst* value) {
         SpillGpr(new_location_index);
         gprs[new_location_index].SetupLocation(value);
         MarkTouched(gprs[new_location_index]);
-        SetLocationHint(value, HostLoc{HostLoc::Kind::Gpr, new_location_index});
+        SetValueLocation(value, HostLoc{HostLoc::Kind::Gpr, new_location_index});
         return new_location_index;
     } else if constexpr (kind == HostLoc::Kind::Fpr) {
         const int new_location_index = AllocateRegister(fprs, fpr_order);
         SpillFpr(new_location_index);
         fprs[new_location_index].SetupLocation(value);
         MarkTouched(fprs[new_location_index]);
-        SetLocationHint(value, HostLoc{HostLoc::Kind::Fpr, new_location_index});
+        SetValueLocation(value, HostLoc{HostLoc::Kind::Fpr, new_location_index});
         return new_location_index;
     } else if constexpr (kind == HostLoc::Kind::Flags) {
         SpillFlags();
         flags.SetupLocation(value);
         MarkTouched(flags);
-        SetLocationHint(value, HostLoc{HostLoc::Kind::Flags, 0});
+        SetValueLocation(value, HostLoc{HostLoc::Kind::Flags, 0});
         return 0;
     } else {
         static_assert(Common::always_false_v<mcl::mp::lift_value<kind>>);
@@ -543,7 +543,7 @@ void RegAlloc::SpillNonEmptyGpr(int index) {
     spills[new_location_index] = std::exchange(gprs[index], {});
     MarkTouched(spills[new_location_index]);
     spills_used = std::max(spills_used, static_cast<size_t>(new_location_index) + 1);
-    SetLocationHints(HostLoc{HostLoc::Kind::Spill, new_location_index});
+    SetValueLocations(HostLoc{HostLoc::Kind::Spill, new_location_index});
 }
 
 void RegAlloc::SpillNonEmptyFpr(int index) {
@@ -556,7 +556,7 @@ void RegAlloc::SpillNonEmptyFpr(int index) {
     spills[new_location_index] = std::exchange(fprs[index], {});
     MarkTouched(spills[new_location_index]);
     spills_used = std::max(spills_used, static_cast<size_t>(new_location_index) + 1);
-    SetLocationHints(HostLoc{HostLoc::Kind::Spill, new_location_index});
+    SetValueLocations(HostLoc{HostLoc::Kind::Spill, new_location_index});
 }
 
 void RegAlloc::ReadWriteFlags(Argument& read, IR::Inst* write) {
@@ -590,7 +590,7 @@ void RegAlloc::ReadWriteFlags(Argument& read, IR::Inst* write) {
         flags.SetupLocation(write);
         MarkTouched(flags);
         flags.realized = false;
-        SetLocationHint(write, HostLoc{HostLoc::Kind::Flags, 0});
+        SetValueLocation(write, HostLoc{HostLoc::Kind::Flags, 0});
     }
 }
 
@@ -604,7 +604,7 @@ void RegAlloc::SpillFlags() {
     code.MRS(oaknut::XReg{new_location_index}, oaknut::SystemReg::NZCV);
     gprs[new_location_index] = std::exchange(flags, {});
     MarkTouched(gprs[new_location_index]);
-    SetLocationHints(HostLoc{HostLoc::Kind::Gpr, new_location_index});
+    SetValueLocations(HostLoc{HostLoc::Kind::Gpr, new_location_index});
 }
 
 int RegAlloc::FindFreeSpill() const {
@@ -664,22 +664,6 @@ void RegAlloc::LoadCopyInto(const IR::Value& value, oaknut::QReg reg) {
     }
 }
 
-std::optional<HostLoc> RegAlloc::ValueLocation(const IR::Inst* value) const {
-    // A value is held in at most one location, so a hinted location that holds it is the answer.
-    const unsigned name = value->GetName();
-    if (name != 0 && name < location_hints.size()) {
-        if (const auto hint = location_hints[name]; hint && ValueInfo(*hint).Contains(value)) {
-            return hint;
-        }
-    }
-
-    const auto location = FindValueLocation(value);
-    if (location) {
-        SetLocationHint(value, *location);
-    }
-    return location;
-}
-
 std::optional<HostLoc> RegAlloc::FindValueLocation(const IR::Inst* value) const {
     const auto contains_value = [value](const HostLocInfo& info) { return info.Contains(value); };
 
@@ -699,20 +683,20 @@ std::optional<HostLoc> RegAlloc::FindValueLocation(const IR::Inst* value) const 
     return std::nullopt;
 }
 
-void RegAlloc::SetLocationHint(const IR::Inst* value, HostLoc host_loc) const {
+void RegAlloc::SetValueLocation(const IR::Inst* value, HostLoc host_loc) {
     const unsigned name = value->GetName();
     if (name == 0) {
         return;
     }
-    if (name >= location_hints.size()) {
-        location_hints.resize(std::max<size_t>(name + 1, 256));
+    if (name >= value_locations.size()) {
+        value_locations.resize(std::max<size_t>(name + 1, 256));
     }
-    location_hints[name] = host_loc;
+    value_locations[name] = {block_mark, host_loc};
 }
 
-void RegAlloc::SetLocationHints(HostLoc host_loc) const {
+void RegAlloc::SetValueLocations(HostLoc host_loc) {
     for (const IR::Inst* value : ValueInfo(host_loc).values) {
-        SetLocationHint(value, host_loc);
+        SetValueLocation(value, host_loc);
     }
 }
 
