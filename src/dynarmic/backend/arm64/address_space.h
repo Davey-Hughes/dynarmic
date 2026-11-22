@@ -67,7 +67,7 @@ protected:
     }
 
     size_t GetRemainingSize();
-    CodePtr Emit(IR::Block ir_block);
+    CodePtr Emit(IR::Block&& block);
     // The info has to be the one in block_infos: block_references keeps its address.
     void Link(const EmittedBlockInfo& block_info);
     void LinkBlockLink(const CodePtr entry_point, const CodePtr target_ptr, const BlockRelocation& block_relocation);

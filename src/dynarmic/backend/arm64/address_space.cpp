@@ -117,14 +117,14 @@ size_t AddressSpace::GetRemainingSize() {
     return code_cache_size - static_cast<size_t>(code.offset());
 }
 
-CodePtr AddressSpace::Emit(IR::Block block) {
+CodePtr AddressSpace::Emit(IR::Block&& block) {
     if (GetRemainingSize() < 1024 * 1024) {
         ClearCache();
     }
 
     UnprotectCodeMemory();
 
-    EmittedBlockInfo new_block_info = EmitArm64(code, std::move(block), GetEmitConfig(), fastmem_manager, emit_buffers);
+    EmittedBlockInfo new_block_info = EmitArm64(code, block, GetEmitConfig(), fastmem_manager, emit_buffers);
     const CodePtr entry_point = new_block_info.entry_point;
 
     ASSERT(block_entries.insert({block.Location(), entry_point}).second);
