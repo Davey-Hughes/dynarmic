@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <utility>
 
+#include <boost/container/small_vector.hpp>
 #include <mcl/bit_cast.hpp>
 #include <oaknut/oaknut.hpp>
 
@@ -865,9 +866,18 @@ void AssignVfpMemoryRoles(EmitContext& ctx) {
     auto& roles = ctx.vfp_memory;
     roles.clear();
 
+    // Only these instructions can start a role. Without them the table stays empty: VfpMemory() answers
+    // None for a name past its end.
+    boost::container::small_vector<IR::Inst*, 16> starts;
     size_t max_name = 0;
-    for (const auto& inst : ctx.block) {
+    for (auto& inst : ctx.block) {
         max_name = std::max<size_t>(max_name, inst.GetName());
+        if (inst.GetOpcode() == IR::Opcode::Pack2x32To1x64 || inst.GetOpcode() == IR::Opcode::A32WriteMemory32) {
+            starts.push_back(&inst);
+        }
+    }
+    if (starts.empty()) {
+        return;
     }
     roles.resize(max_name + 1);
 
@@ -892,7 +902,8 @@ void AssignVfpMemoryRoles(EmitContext& ctx) {
         }
     };
 
-    for (auto& inst : ctx.block) {
+    for (IR::Inst* const start : starts) {
+        IR::Inst& inst = *start;
         switch (inst.GetOpcode()) {
         case IR::Opcode::Pack2x32To1x64: {
             // %lo = A32ReadMemory32 a; [address arithmetic]; %hi = A32ReadMemory32 a+4; ...; Pack2x32To1x64 %lo, %hi
