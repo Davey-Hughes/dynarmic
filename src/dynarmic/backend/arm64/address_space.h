@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include <boost/container/small_vector.hpp>
 #include <mcl/stdint.hpp>
 #include <oaknut/code_block.hpp>
 #include <oaknut/oaknut.hpp>
@@ -112,8 +111,14 @@ protected:
     // block_infos[i] belongs to reverse_block_entries[i]. Infos are only added until ClearCache(), so their
     // addresses are stable.
     std::deque<EmittedBlockInfo> block_infos;
+    // A block that links to a target. The references to one target form a chain, newest first; the nodes
+    // live in emit_buffers.block_lists.
+    struct BlockReference {
+        const EmittedBlockInfo* block_info;
+        const BlockReference* next;
+    };
     // The blocks that link to each target, each listed once (Link() adds a block's references together).
-    tsl::robin_map<IR::LocationDescriptor, boost::container::small_vector<const EmittedBlockInfo*, 2>> block_references;
+    tsl::robin_map<IR::LocationDescriptor, const BlockReference*> block_references;
 
     std::vector<std::pair<CodePtr, size_t>> unflushed_code;
 

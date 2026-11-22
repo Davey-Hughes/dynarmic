@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
+#include <span>
 
 #include <mcl/bit_cast.hpp>
 
@@ -280,9 +281,10 @@ void AddressSpace::Link(const EmittedBlockInfo& block_info) {
 
     for (const auto& block_relocation : block_info.block_relocations) {
         // A block can link to the same target more than once; its references are added here, one after another.
-        auto& references = block_references[block_relocation.target];
-        if (references.empty() || references.back() != &block_info) {
-            references.push_back(&block_info);
+        const BlockReference*& references = block_references[block_relocation.target];
+        if (!references || references->block_info != &block_info) {
+            const BlockReference reference{&block_info, references};
+            references = emit_buffers.block_lists.Store(std::span{&reference, 1}).data();
         }
         LinkBlockLink(block_info.entry_point, Get(block_relocation.target), block_relocation);
     }
@@ -321,7 +323,8 @@ void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor,
         return;
     }
 
-    for (const EmittedBlockInfo* block_info : references->second) {
+    for (const BlockReference* reference = references->second; reference; reference = reference->next) {
+        const EmittedBlockInfo* const block_info = reference->block_info;
         for (const auto& block_relocation : block_info->block_relocations) {
             if (block_relocation.target == target_descriptor) {
                 LinkBlockLink(block_info->entry_point, target_ptr, block_relocation);
