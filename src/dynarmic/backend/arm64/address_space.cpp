@@ -41,7 +41,7 @@ AddressSpace::~AddressSpace() = default;
 
 CodePtr AddressSpace::Get(IR::LocationDescriptor descriptor) {
     if (const auto iter = block_entries.find(descriptor); iter != block_entries.end()) {
-        return iter->second;
+        return iter->second.entry_point;
     }
     return nullptr;
 }
@@ -82,7 +82,7 @@ void AddressSpace::InvalidateBasicBlocks(const tsl::robin_set<IR::LocationDescri
 
     for (const auto& descriptor : descriptors) {
         const auto iter = block_entries.find(descriptor);
-        if (iter == block_entries.end()) {
+        if (iter == block_entries.end() || !iter->second.entry_point) {
             continue;
         }
 
@@ -91,7 +91,7 @@ void AddressSpace::InvalidateBasicBlocks(const tsl::robin_set<IR::LocationDescri
         RelinkForDescriptor(descriptor, nullptr);
 
         FastDispatchErase(descriptor);
-        block_entries.erase(iter);
+        iter.value().entry_point = nullptr;
     }
 
     FlushCode();
@@ -103,7 +103,6 @@ void AddressSpace::ClearCache() {
     block_entries.clear();
     reverse_block_entries.clear();
     block_infos.clear();
-    block_references.clear();
     emit_buffers.block_lists.Clear();
     code.set_offset(prelude_info.end_of_prelude);
 }
@@ -128,7 +127,9 @@ CodePtr AddressSpace::Emit(IR::Block&& block) {
     EmittedBlockInfo new_block_info = EmitArm64(code, block, GetEmitConfig(), fastmem_manager, emit_buffers);
     const CodePtr entry_point = new_block_info.entry_point;
 
-    ASSERT(block_entries.insert({block.Location(), entry_point}).second);
+    CodePtr& entry = block_entries[block.Location()].entry_point;
+    ASSERT(!entry);
+    entry = entry_point;
     ASSERT(reverse_block_entries.empty() || reverse_block_entries.back().first < entry_point);
     reverse_block_entries.emplace_back(entry_point, block.Location());
     const EmittedBlockInfo& block_info = block_infos.emplace_back(std::move(new_block_info));
@@ -281,12 +282,12 @@ void AddressSpace::Link(const EmittedBlockInfo& block_info) {
 
     for (const auto& block_relocation : block_info.block_relocations) {
         // A block can link to the same target more than once; its references are added here, one after another.
-        const BlockReference*& references = block_references[block_relocation.target];
-        if (!references || references->block_info != &block_info) {
-            const BlockReference reference{&block_info, references};
-            references = emit_buffers.block_lists.Store(std::span{&reference, 1}).data();
+        BlockEntry& target = block_entries[block_relocation.target];
+        if (!target.references || target.references->block_info != &block_info) {
+            const BlockReference reference{&block_info, target.references};
+            target.references = emit_buffers.block_lists.Store(std::span{&reference, 1}).data();
         }
-        LinkBlockLink(block_info.entry_point, Get(block_relocation.target), block_relocation);
+        LinkBlockLink(block_info.entry_point, target.entry_point, block_relocation);
     }
 }
 
@@ -318,12 +319,12 @@ void AddressSpace::LinkBlockLink(const CodePtr entry_point, const CodePtr target
 }
 
 void AddressSpace::RelinkForDescriptor(IR::LocationDescriptor target_descriptor, CodePtr target_ptr) {
-    const auto references = block_references.find(target_descriptor);
-    if (references == block_references.end()) {
+    const auto iter = block_entries.find(target_descriptor);
+    if (iter == block_entries.end()) {
         return;
     }
 
-    for (const BlockReference* reference = references->second; reference; reference = reference->next) {
+    for (const BlockReference* reference = iter->second.references; reference; reference = reference->next) {
         const EmittedBlockInfo* const block_info = reference->block_info;
         for (const auto& block_relocation : block_info->block_relocations) {
             if (block_relocation.target == target_descriptor) {

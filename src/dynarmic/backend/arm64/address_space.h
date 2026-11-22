@@ -67,7 +67,7 @@ protected:
 
     size_t GetRemainingSize();
     CodePtr Emit(IR::Block&& block);
-    // The info has to be the one in block_infos: block_references keeps its address.
+    // The info has to be the one in block_infos: block_entries keeps its address.
     void Link(const EmittedBlockInfo& block_info);
     void LinkBlockLink(const CodePtr entry_point, const CodePtr target_ptr, const BlockRelocation& block_relocation);
     // Patches the blocks that link to the target. The patched instructions wait in unflushed_code for FlushCode().
@@ -103,22 +103,27 @@ protected:
     oaknut::CodeBlock mem;
     oaknut::CodeGenerator code;
 
-    // A IR::LocationDescriptor will have one current CodePtr.
-    // However, there can be multiple other CodePtrs which are older, previously invalidated blocks.
-    tsl::robin_map<IR::LocationDescriptor, CodePtr> block_entries;
-    // Sorted by entry point: Emit() only appends code until ClearCache() resets it.
-    std::vector<std::pair<CodePtr, IR::LocationDescriptor>> reverse_block_entries;
-    // block_infos[i] belongs to reverse_block_entries[i]. Infos are only added until ClearCache(), so their
-    // addresses are stable.
-    std::deque<EmittedBlockInfo> block_infos;
     // A block that links to a target. The references to one target form a chain, newest first; the nodes
     // live in emit_buffers.block_lists.
     struct BlockReference {
         const EmittedBlockInfo* block_info;
         const BlockReference* next;
     };
-    // The blocks that link to each target, each listed once (Link() adds a block's references together).
-    tsl::robin_map<IR::LocationDescriptor, const BlockReference*> block_references;
+    // A location's current code, if any, and the blocks that link to it, each listed once (Link() adds a
+    // block's references together). Invalidation clears the entry point and keeps the references.
+    struct BlockEntry {
+        CodePtr entry_point = nullptr;
+        const BlockReference* references = nullptr;
+    };
+
+    // A IR::LocationDescriptor will have one current CodePtr.
+    // However, there can be multiple other CodePtrs which are older, previously invalidated blocks.
+    tsl::robin_map<IR::LocationDescriptor, BlockEntry> block_entries;
+    // Sorted by entry point: Emit() only appends code until ClearCache() resets it.
+    std::vector<std::pair<CodePtr, IR::LocationDescriptor>> reverse_block_entries;
+    // block_infos[i] belongs to reverse_block_entries[i]. Infos are only added until ClearCache(), so their
+    // addresses are stable.
+    std::deque<EmittedBlockInfo> block_infos;
 
     std::vector<std::pair<CodePtr, size_t>> unflushed_code;
 
