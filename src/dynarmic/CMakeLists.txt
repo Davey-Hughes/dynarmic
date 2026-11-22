@@ -92,6 +92,7 @@ add_library(dynarmic
     ir/opt/passes.h
     ir/opt/polyfill_pass.cpp
     ir/opt/verification_pass.cpp
+    ir/terminal.cpp
     ir/terminal.h
     ir/type.cpp
     ir/type.h

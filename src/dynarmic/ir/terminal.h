@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 #include <boost/variant.hpp>
 #include <mcl/stdint.hpp>
 
@@ -77,6 +79,13 @@ struct FastDispatchHint {};
 struct If;
 struct CheckBit;
 struct CheckHalt;
+
+namespace detail {
+// boost::recursive_wrapper allocates its terminal on every copy and move of a Terminal, so If, CheckBit
+// and CheckHalt take their memory from a per-thread free list instead of the heap.
+void* AllocateNestedTerminal(std::size_t size);
+void FreeNestedTerminal(void* p) noexcept;
+}  // namespace detail
 /// A Terminal is the terminal instruction in a MicroBlock.
 using Terminal = boost::variant<
     Invalid,
@@ -97,6 +106,8 @@ using Terminal = boost::variant<
 struct If {
     If(Cond if_, Terminal then_, Terminal else_)
             : if_(if_), then_(std::move(then_)), else_(std::move(else_)) {}
+    static void* operator new(std::size_t size) { return detail::AllocateNestedTerminal(size); }
+    static void operator delete(void* p) noexcept { detail::FreeNestedTerminal(p); }
     Cond if_;
     Terminal then_;
     Terminal else_;
@@ -110,6 +121,8 @@ struct If {
 struct CheckBit {
     CheckBit(Terminal then_, Terminal else_)
             : then_(std::move(then_)), else_(std::move(else_)) {}
+    static void* operator new(std::size_t size) { return detail::AllocateNestedTerminal(size); }
+    static void operator delete(void* p) noexcept { detail::FreeNestedTerminal(p); }
     Terminal then_;
     Terminal else_;
 };
@@ -121,6 +134,8 @@ struct CheckBit {
 struct CheckHalt {
     explicit CheckHalt(Terminal else_)
             : else_(std::move(else_)) {}
+    static void* operator new(std::size_t size) { return detail::AllocateNestedTerminal(size); }
+    static void operator delete(void* p) noexcept { detail::FreeNestedTerminal(p); }
     Terminal else_;
 };
 
