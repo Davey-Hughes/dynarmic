@@ -15,6 +15,11 @@ namespace Dynarmic::IR {
 
 enum class Type;
 
+// <winnt.h> defines RotateRight32 and RotateRight64 as macros, and MinGW's <intrin.h> later changes
+// what RotateRight64 expands to. Drop them so the enum and later Opcode:: uses name the same opcode.
+#undef RotateRight32
+#undef RotateRight64
+
 /**
  * The Opcodes of our intermediate representation.
  * Type signatures for each opcode can be found in opcodes.inc
